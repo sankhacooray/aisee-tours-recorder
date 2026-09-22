@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-164642" />
+<link rel="stylesheet" href="styles.css?v=20260922-174651" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -95,6 +95,11 @@
       <span>Recording unlocks at ±30 m or better (<span id="gpsWaitAcc">no GPS fix yet</span>). Open sky helps.</span></div>
   </div>
 
+  <!-- Re-centre (follow me) — shown after the map is dragged away from you -->
+  <button class="recenter" id="recenterBtn" aria-label="Follow my location" title="Follow my location" hidden>
+    <i class="fa-solid fa-location-crosshairs"></i>
+  </button>
+
   <!-- Bottom chip row: GPS accuracy chip + live counters, centred above the actions -->
   <div class="hudrow">
     <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
@@ -115,15 +120,27 @@
     <button class="act undo" id="undoBtn" disabled><span class="ico"><i class="fa-solid fa-rotate-left"></i></span><span>Undo</span></button>
   </nav>
 
-  <!-- POI sheet -->
-  <div class="sheet" id="poiSheet" hidden>
-    <div class="card">
-      <h2 id="poiTitle">Mark a primary POI (1POI)</h2>
-      <p class="hint" id="poiCoord"></p>
-      <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" /></label>
-      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" /></label>
-      <label>Briefing<textarea id="poiBrief" placeholder="What the visitor hears here…"></textarea></label>
-      <label>Geofence radius (m)<input id="poiRad" type="number" min="1" value="20" /></label>
+  <!-- POI form — full-screen frosted layout, form up top, keyboard gets the bottom -->
+  <div class="pickscreen formscreen" id="poiSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title" id="poiTitle">Mark a primary POI (1POI)</span>
+        <span class="pick-sub" id="poiCoord"></span>
+      </div>
+      <button class="iconbtn" data-close="poiSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" autocomplete="off" enterkeyhint="next" /></label>
+      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" autocomplete="off" enterkeyhint="next" /></label>
+      <label>Briefing<textarea id="poiBrief" rows="2" placeholder="What the visitor hears here…"></textarea></label>
+      <div class="fieldlabel">Geofence radius</div>
+      <!-- Same presets as the dashboard's POI editor (15 / 20 / 25 / 35 m) -->
+      <div class="segs" id="poiRadSegs">
+        <button type="button" class="seg" data-v="15"><b>15 m</b><span>tight</span></button>
+        <button type="button" class="seg" data-v="20"><b>20 m</b><span>snug</span></button>
+        <button type="button" class="seg on" data-v="25"><b>25 m</b><span>default</span></button>
+        <button type="button" class="seg" data-v="35"><b>35 m</b><span>wide</span></button>
+      </div>
       <div class="row">
         <button class="btn ghost" data-close="poiSheet">Cancel</button>
         <button class="btn primary" id="poiSave">Drop POI</button>
@@ -209,23 +226,28 @@
     </div>
   </div>
 
-  <!-- Save sheet -->
-  <div class="sheet" id="saveSheet" hidden>
-    <div class="card">
-      <h2 id="saveTitle">Save route</h2>
-      <p class="hint" id="saveSummary"></p>
-      <label>Route name *<input id="rName" type="text" placeholder="e.g. Heritage Loop" /></label>
-      <label>Status
-        <select id="rStatus"><option value="draft" selected>draft</option><option value="preview">preview</option><option value="live">live</option></select>
-      </label>
-      <label>Tracking mode
-        <select id="rTracking"><option value="beacons" selected>beacons</option><option value="vslam">vslam</option><option value="hybrid">hybrid</option></select>
-      </label>
-      <label>Description<textarea id="rDesc" placeholder="Optional"></textarea></label>
-      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through waypoints (Directions API) — use the raw GPS track if unsure</label>
+  <!-- Save form — full-screen frosted layout, form up top, keyboard gets the bottom -->
+  <div class="pickscreen formscreen" id="saveSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title" id="saveTitle">Save route</span>
+        <span class="pick-sub" id="saveSummary"></span>
+      </div>
+      <button class="iconbtn" data-close="saveSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Route name *<input id="rName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" enterkeyhint="next" /></label>
+      <div class="fieldlabel">Status</div>
+      <div class="segs" id="rStatusSegs">
+        <button type="button" class="seg on" data-v="draft"><b>Draft</b></button>
+        <button type="button" class="seg" data-v="preview"><b>Preview</b></button>
+        <button type="button" class="seg" data-v="live"><b>Live</b></button>
+      </div>
+      <label>Description<textarea id="rDesc" rows="2" placeholder="Optional"></textarea></label>
+      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through waypoints — keep off to use the raw GPS track</label>
       <div class="row">
         <button class="btn ghost" data-close="saveSheet">Cancel</button>
-        <button class="btn primary" id="saveGo">Save to backend</button>
+        <button class="btn primary" id="saveGo">Save</button>
       </div>
       <p class="msg" id="saveMsg"></p>
     </div>
@@ -263,18 +285,6 @@
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-rotate-left"></i></span>
         <div class="help-text"><b>Undo</b><p>Remove the last waypoint or POI you added, in case of a mistake.</p></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Result sheet -->
-  <div class="sheet" id="resultSheet" hidden>
-    <div class="card">
-      <h2 id="resTitle">Saved</h2>
-      <p class="hint" id="resBody"></p>
-      <div class="row">
-        <a class="btn ghost" id="resOpen" target="_blank" rel="noopener">Open dashboard</a>
-        <button class="btn primary" data-close="resultSheet" id="resNew">New route</button>
       </div>
     </div>
   </div>
@@ -339,6 +349,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-164642"></script>
+  <script src="app.js?v=20260922-174651"></script>
 </body>
 </html>

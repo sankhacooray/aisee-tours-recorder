@@ -149,6 +149,21 @@ body { display: flex; flex-direction: column; }
 .form-body textarea { min-height: 64px; }
 .form-body .row { margin-top: 2px; }
 .form-body .msg:empty { display: none; }
+.form-body label.check { color: var(--ink-70); font-weight: 500; font-size: 12.5px; }
+.fieldlabel { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+
+/* Segmented option buttons on one line (radius presets, status). */
+.segs { display: flex; gap: 6px; margin-bottom: 12px; }
+.seg {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 8px 4px; border-radius: 11px; cursor: pointer; font-family: inherit; color: var(--ink);
+  background: rgba(255,255,255,.85); border: 1.5px solid rgba(26,31,28,.10);
+}
+.seg b { font-size: 13.5px; font-weight: 700; }
+.seg span { font-size: 10.5px; color: var(--ink-70); }
+.seg.on { background: var(--purple-deep); border-color: var(--purple-deep); color: #fff; }
+.seg.on span { color: rgba(255,255,255,.8); }
+.seg:disabled { opacity: .55; }
 .formscreen.busy .form-body label, .formscreen.busy .btn.ghost, .formscreen.busy [data-close] { opacity: .5; }
 .formscreen.busy .pick-head [data-close] { pointer-events: none; }
 
@@ -329,11 +344,21 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; gap: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.12);
   white-space: nowrap;   /* one line — the .hudrow sizes to fit */
 }
+/* Re-centre / follow-me button — bottom-right, above the chip row. */
+.recenter {
+  position: absolute; right: 12px; z-index: 9;
+  bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 76px);
+  width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6); color: #1769ff; font-size: 20px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,.18);
+}
+.recenter:active { background: #fff; }
+
 /* Weak-GPS notice — sits above the counters, semi-transparent frosted pill. */
 .gpswait {
   position: absolute; left: 50%; transform: translateX(-50%); z-index: 9;
   bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 70px);
-  width: max-content; max-width: calc(100% - 32px);
+  width: max-content; max-width: calc(100% - 136px);   /* clear of the re-centre button */
   display: flex; align-items: center; gap: 11px; padding: 10px 14px;
   background: rgba(26,31,28,.62); color: #fff; border-radius: 14px;
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);

@@ -508,9 +508,12 @@ function initMap() {
   var start = lastFix || storedFix() || { lat: 1.3066, lng: 103.8155 };
   map = new google.maps.Map($('map'), {
     center: { lat: start.lat, lng: start.lng }, zoom: 17, mapTypeId: 'roadmap',
-    disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy'
+    disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy',
+    zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER }   // clear of the bottom chips
   });
-  map.addListener('dragstart', function () { follow = false; });
+  // Follow-me like Google Maps: the map tracks the walker until you drag it;
+  // then a re-centre button appears to resume following.
+  map.addListener('dragstart', function () { setFollow(false); });
   trackPoly = new google.maps.Polyline({ map: map, path: [], strokeColor: '#1B4332', strokeOpacity: .95, strokeWeight: 5 });
   meMarker = new google.maps.Marker({ map: map, zIndex: 999,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#1769ff', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
@@ -520,6 +523,17 @@ function initMap() {
   google.maps.event.addListenerOnce(map, 'idle', function () { locMapIdle = true; maybeRevealMap(); });
   syncRecBtn();   // apply the GPS gate before the first fix arrives
   $('hud').hidden = false;
+}
+
+/* Follow mode: pan with each GPS fix. Off after a manual drag or when fitting a
+ * whole tour; the re-centre button (shown only while off) turns it back on. */
+function setFollow(on) {
+  follow = !!on;
+  var b = $('recenterBtn'); if (b) b.hidden = follow || !map;
+}
+function recenter() {
+  setFollow(true);
+  if (map && lastFix) { map.panTo({ lat: lastFix.lat, lng: lastFix.lng }); if (map.getZoom() < 17) map.setZoom(18); }
 }
 
 /* ── Geolocation ─────────────────────────────────────────── */
@@ -664,7 +678,7 @@ function setRecording(on) {
   recording = on;
   if (on) {
     started = true;
-    follow = true;
+    setFollow(true);
     if (lastFix) { trackPath.push({ lat: lastFix.lat, lng: lastFix.lng }); trackPoly.setPath(trackPath); }
   }
   syncRecBtn();
@@ -708,15 +722,15 @@ function openPoi(type) {
   if (farOutside) return toast('Walk back to the tour area first');
   pendingPoi = { lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
   $('poiCoord').textContent = fmt(pendingPoi.lat) + ', ' + fmt(pendingPoi.lng) + '  (±' + pendingPoi.accuracy_m + 'm)';
-  $('poiName').value = ''; $('poiCat').value = ''; $('poiBrief').value = ''; $('poiRad').value = '20';
-  show('poiSheet'); setTimeout(function () { $('poiName').focus(); }, 50);
+  $('poiName').value = ''; $('poiCat').value = ''; $('poiBrief').value = ''; setSeg('poiRadSegs', '25');
+  show('poiSheet'); focusNow($('poiName'));
 }
 function savePoi() {
   var name = $('poiName').value.trim();
   if (!name) return toast('POI needs a name');
   var m = { kind: 'poi', poi_type: pendingPoiType, lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
     name: name, category: $('poiCat').value.trim(), briefing_md: $('poiBrief').value.trim(),
-    geofence_radius_m: Number($('poiRad').value) || 20 };
+    geofence_radius_m: Number(segVal('poiRadSegs')) || 25 };
   poiVisual(m, poiNumber(pendingPoiType));
   marks.push(m); hide('poiSheet'); afterMark((isSecondary(m) ? '2POI' : '1POI') + ' “' + name + '” dropped');
 }
@@ -764,8 +778,7 @@ function openSave() {
     var r = loadedRoute || {};
     $('rName').value = r.name || '';
     $('rDesc').value = r.description || '';
-    if (r.status) $('rStatus').value = r.status;
-    if (r.tracking_mode) $('rTracking').value = r.tracking_mode;
+    setSeg('rStatusSegs', r.status || 'draft');
     var newPoi = marks.filter(function (m) { return m.kind === 'poi' && !m.existing; }).length;
     var exPoi  = marks.filter(function (m) { return m.kind === 'poi' && m.existing; }).length;
     $('saveSummary').textContent = exPoi + ' existing + ' + newPoi + ' new POI' + (newPoi === 1 ? '' : 's') +
@@ -777,8 +790,10 @@ function openSave() {
       ? Math.round(google.maps.geometry.spherical.computeLength(trackPath.map(function (c) { return new google.maps.LatLng(c.lat, c.lng); }))) : 0;
     $('saveSummary').textContent = trackPath.length + ' GPS points · ' + cp + ' waypoints · ' + po + ' POIs · ' + dist + ' m';
     $('rName').value = tourName;
+    setSeg('rStatusSegs', 'draft');
   }
-  show('saveSheet'); setTimeout(function () { $('rName').focus(); }, 50);
+  setSaveBusy(false);
+  show('saveSheet');
 }
 
 function doSave() {
@@ -812,11 +827,14 @@ function doSave() {
     var start = (merged && merged[0]) || trackPath[0] || (marks[0] ? { lat: marks[0].lat, lng: marks[0].lng } : null);
     var payload = {
       auth: AUTH.token, projectId: projectId,
-      name: name, description: $('rDesc').value.trim(), status: $('rStatus').value, tracking_mode: $('rTracking').value,
+      name: name, description: $('rDesc').value.trim(), status: segVal('rStatusSegs'),
       distance_m: distM, est_duration_min: distM ? Math.max(1, Math.round(distM / 80)) : '',
       start_lat: start ? start.lat : '', start_lng: start ? start.lng : '',
       track_polyline: track, waypoints: checkpoints, pois: pois
     };
+    // Tours are GPS-tracked (beacons / vSLAM were never built): new routes are
+    // stamped 'gps'; an update leaves the stored tracking_mode alone.
+    if (!editing) payload.tracking_mode = 'gps';
     if (editing) {
       payload.action = 'route.update'; payload.routeId = editingRouteId;
       if (loadedVersion != null) payload.expected_content_version = loadedVersion;
@@ -834,11 +852,14 @@ function doSave() {
         if (editing && res.content_version != null) loadedVersion = Number(res.content_version);
         if (editing && loadedRoute) { loadedRoute.name = name; syncTourLabel(); }
         saveOpId = null; clearDraft();   // committed — this route is no longer an unsaved draft
-        hide('saveSheet'); showResult(res.routeId || editingRouteId, editing);
+        hide('saveSheet'); setSaveBusy(false);
+        toast((editing ? 'Updated “' : 'Saved “') + name + '”');
+        reloadSavedTour(res.routeId || editingRouteId);
       })
-      .catch(function (e) { msg.textContent = 'Failed: ' + e.message + ' — tap Save to retry (no duplicate will be created).'; msg.className = 'msg err'; });
+      .catch(function (e) { setSaveBusy(false); msg.textContent = 'Failed: ' + e.message + ' — tap Save to retry (no duplicate will be created).'; msg.className = 'msg err'; });
   };
-  var onErr = function (err) { msg.textContent = err; msg.className = 'msg err'; };
+  var onErr = function (err) { setSaveBusy(false); msg.textContent = err; msg.className = 'msg err'; };
+  setSaveBusy(true);
 
   if (editing) buildEditedTrack(finish, onErr);
   else buildTrack(snap, checkpoints, finish, onErr);
@@ -871,13 +892,27 @@ function buildTrack(snap, checkpoints, cb, errCb) {
   });
 }
 
-function showResult(routeId, editing) {
-  $('resTitle').textContent = editing ? 'Tour updated' : 'Route saved';
-  $('resBody').textContent = editing
-    ? 'Updated “' + routeId + '”. The dashboard now shows the extended path and the new POIs.'
-    : 'Created “' + routeId + '”. It now renders on the dashboard map.';
-  $('resOpen').href = backendUrl() || '#';
-  show('resultSheet');
+/* Lock the whole save form (fields, status, Cancel, ✕) while saving. */
+function setSaveBusy(on) {
+  var fs = $('saveSheet');
+  fs.querySelectorAll('input, textarea, select, button').forEach(function (el) { el.disabled = on; });
+  fs.querySelector('.form-body').classList.toggle('loading-wave', on);
+  fs.classList.toggle('busy', on);
+  $('saveGo').textContent = on ? 'Saving…' : 'Save';
+}
+
+/* After a save there's no result card: re-open the saved tour from the backend
+ * so the map + tour picker show it as it's now stored (new marks become part of
+ * it). If that fetch fails, fall back to a clean "New tour". */
+function reloadSavedTour(routeId) {
+  if (!routeId) { resetRoute(); return; }
+  getJson('action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) +
+          '&projectId=' + encodeURIComponent($('projSel').value), 'reloadSavedTour')
+    .then(function (res) {
+      if (!res || !res.ok) throw new Error((res && res.error) || 'could not reload tour');
+      hydrateTour(res, true);
+    })
+    .catch(function () { resetRoute(); });
 }
 function resetRoute() {
   marks.forEach(function (m) { if (m.marker) m.marker.setMap(null); if (m.circle) m.circle.setMap(null); });
@@ -1040,7 +1075,7 @@ function loadTour(routeId, btn) {
   if (btn) btn.classList.add('loading-wave');      // wave on the tapped card while it opens
   var done = function () { list.classList.remove('busy'); if (btn) btn.classList.remove('loading-wave'); };
   var old = list.querySelector('.msg.err'); if (old) old.remove();
-  follow = false;
+  setFollow(false);
   getJson('action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'loadTour')
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not open tour');
@@ -1050,7 +1085,7 @@ function loadTour(routeId, btn) {
 }
 
 /* Load a backend route bundle into the live editing state. */
-function hydrateTour(b) {
+function hydrateTour(b, quiet) {
   resetRoute();
   var r = b.route || {};
   editingRouteId = r.route_id;
@@ -1077,7 +1112,7 @@ function hydrateTour(b) {
   $('undoBtn').disabled = true;
   updateCounts(); fitTour();
   if (lastFix) checkArea();
-  toast('Opened “' + (r.name || editingRouteId) + '” — tap Record to add POIs or extend it');
+  if (!quiet) toast('Opened “' + (r.name || editingRouteId) + '” — tap Record to add POIs or extend it');
 }
 
 function addExistingPoi(p) {
@@ -1108,7 +1143,7 @@ function computeTourBox() {
   marks.forEach(function (m) { box.extend({ lat: m.lat, lng: m.lng }); any = true; });
   tourBox = any ? box : null;
 }
-function fitTour() { if (tourBox) { follow = false; map.fitBounds(tourBox, 64); } }
+function fitTour() { if (tourBox) { setFollow(false); map.fitBounds(tourBox, 64); } }
 
 function checkArea() {
   if (!tourBox || !lastFix || !google.maps.geometry) return;
@@ -1258,7 +1293,7 @@ function showLinkResolver(join, alts, cb) {
     linkTempPolys.push(new google.maps.Polyline({ map: map, path: o.path, strokeColor: o.color, strokeOpacity: .95, strokeWeight: 5,
       icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '12px' }] }));
   });
-  follow = false; map.fitBounds(bounds, 70);
+  setFollow(false); map.fitBounds(bounds, 70);
 
   var settled = false;
   function pick(conn) { if (settled) return; settled = true; clearLinkTemps(); hide('linkSheet'); linkAbort = null; cb(conn); }
@@ -1385,6 +1420,13 @@ function wireUi() {
   $('nameGo').addEventListener('click', submitName);
   $('npName').addEventListener('input', function () { if ($('npGo').textContent !== 'Creating…') $('npGo').disabled = !$('npName').value.trim(); });
   $('npGo').addEventListener('click', createProject);
+  document.querySelectorAll('.segs').forEach(function (g) {
+    g.addEventListener('click', function (e) { var b = e.target.closest('.seg'); if (b && !b.disabled) setSeg(g.id, b.getAttribute('data-v')); });
+  });
+  $('poiName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('poiCat').focus(); } });
+  $('poiCat').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('poiBrief').focus(); } });
+  $('rName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('rDesc').focus(); } });
+  $('recenterBtn').addEventListener('click', recenter);
   $('openToursApp').hidden = !platformOS();
   $('openToursApp').addEventListener('click', openToursApp);
   document.addEventListener('visibilitychange', function () { if (document.hidden) clearTimeout(appOpenTimer); });
@@ -1414,7 +1456,6 @@ function wireUi() {
   $('saveGo').addEventListener('click', doSave);
   $('signinBtn').addEventListener('click', signIn);
   $('signOutBtn').addEventListener('click', signOut);
-  $('resNew').addEventListener('click', resetRoute);
   $('diagBtn').addEventListener('click', openDiagnostics);
   $('diagClose').addEventListener('click', function () { hide('diagScreen'); });
   $('diagCopy').addEventListener('click', copyDiagnostics);
@@ -1445,6 +1486,12 @@ function wireUi() {
  * focus() made synchronously in the user gesture), with a retry once the
  * overlay has painted. */
 function focusNow(el) { try { el.focus(); } catch (e) {} setTimeout(function () { if (document.activeElement !== el) el.focus(); }, 80); }
+
+/* Segmented option buttons (radius presets, status): one `.seg.on` per group. */
+function segVal(id) { var on = $(id).querySelector('.seg.on'); return on ? on.getAttribute('data-v') : ''; }
+function setSeg(id, v) {
+  $(id).querySelectorAll('.seg').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-v') === String(v)); });
+}
 
 /* ── Tiny helpers ────────────────────────────────────────── */
 function show(id) { $(id).hidden = false; }

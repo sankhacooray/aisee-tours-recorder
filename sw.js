@@ -1,10 +1,10 @@
 /* Service worker — versioned cache.
- * Bump CACHE on each deploy (deploy.py substitutes 20260922-155819).
+ * Bump CACHE on each deploy (deploy.py substitutes 20260922-160124).
  * Navigation: network-first (fresh HTML). Static assets: cache-first (offline shell).
  * Never caches the Google Maps script or the backend API (always network). */
 
-var CACHE = 'recorder-20260922-155819';
-var ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg'];
+var CACHE = 'recorder-20260922-160124';
+var ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () { return self.skipWaiting(); }));

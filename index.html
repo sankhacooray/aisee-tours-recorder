@@ -4,10 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1" />
 <meta name="theme-color" content="#5E519A" />
-<title>Tours Route Recorder</title>
+<title>AiSee Recorder</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
-<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-title" content="AiSee Recorder" />
+<meta name="application-name" content="AiSee Recorder" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-155819" />
+<link rel="stylesheet" href="styles.css?v=20260922-160124" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -289,7 +291,7 @@
   <!-- Sign-in overlay (shown until authenticated via the backend login proxy) -->
   <div class="sheet signin" id="signinSheet" hidden>
     <div class="card signin-card">
-      <div class="signin-brand">Tours<span style="color:var(--purple)">·</span>Recorder</div>
+      <div class="signin-brand">AiSee<span style="color:var(--purple)">·</span>Recorder</div>
       <p class="hint">Sign in with your Aisee / AHLab Google account to record routes. No tokens or keys
         to enter — the backend handles login.</p>
       <button class="btn primary signin-btn" id="signinBtn">
@@ -315,6 +317,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-155819"></script>
+  <script src="app.js?v=20260922-160124"></script>
 </body>
 </html>

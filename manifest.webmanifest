@@ -1,7 +1,7 @@
 {
-  "name": "Tours Route Recorder",
-  "short_name": "Recorder",
-  "description": "Walk a route, mark POIs and checkpoints, and save it to the Aisee tours backend.",
+  "name": "AiSee Recorder",
+  "short_name": "AiSee Recorder",
+  "description": "Walk a route, mark waypoints and POIs, and save it to the AiSee Tours backend.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",
@@ -9,6 +9,29 @@
   "background_color": "#FAFAFA",
   "theme_color": "#5E519A",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ]
 }

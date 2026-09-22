@@ -1318,7 +1318,7 @@ function openDiagnostics() {
 }
 function copyDiagnostics() {
   var log = getErrorLog();
-  var text = 'Aisee Tours Recorder — error log (' + log.length + ')\n' + navigator.userAgent + '\n\n' + JSON.stringify(log, null, 2);
+  var text = 'AiSee Recorder — error log (' + log.length + ')\n' + navigator.userAgent + '\n\n' + JSON.stringify(log, null, 2);
   var done = function () { toast('Copied to clipboard'); };
   try { navigator.clipboard.writeText(text).then(done, function () { toast('Copy failed — select the text manually'); }); }
   catch (e) { toast('Copy not supported — select the text manually'); }

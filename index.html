@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-163403" />
+<link rel="stylesheet" href="styles.css?v=20260922-164642" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -32,7 +32,6 @@
         </button>
         <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
         <div class="bar-tail">
-          <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
           <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
         </div>
       </div>
@@ -42,7 +41,7 @@
           <i class="fa-solid fa-route pb-ico"></i><span class="pb-label" id="tourBtnLabel">Loading tours…</span><span class="pb-tag" id="tourBtnTag" hidden>new</span><i class="fa-solid fa-chevron-down pb-chev"></i>
         </button>
         <div class="bar-tail">
-          <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
+          <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
         </div>
       </div>
     </div>
@@ -96,11 +95,15 @@
       <span>Recording unlocks at ±30 m or better (<span id="gpsWaitAcc">no GPS fix yet</span>). Open sky helps.</span></div>
   </div>
 
-  <!-- Live counters -->
-  <div class="hud" id="hud" hidden>
+  <!-- Bottom chip row: GPS accuracy chip + live counters, centred above the actions -->
+  <div class="hudrow">
+    <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
+    <!-- Live counters -->
+    <div class="hud" id="hud" hidden>
     <span id="recDot" class="recdot" hidden></span>
     <span id="counts">0 waypoints · 0 1POI · 0 2POI</span>
     <span id="dist"></span>
+  </div>
   </div>
 
   <!-- Bottom action bar -->
@@ -336,6 +339,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-163403"></script>
+  <script src="app.js?v=20260922-164642"></script>
 </body>
 </html>

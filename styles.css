@@ -60,7 +60,7 @@ body { display: flex; flex-direction: column; }
 .bar-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .bar-row { display: flex; align-items: center; gap: 4px; height: var(--fbar-row); min-width: 0; }
 /* Same fixed width on both rows, so the project + tour pickers line up. */
-.bar-tail { flex: 0 0 72px; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.bar-tail { flex: 0 0 34px; display: flex; align-items: center; justify-content: center; }
 .bar .applaunch { align-self: center; padding: 0 2px 0 8px; border-left: 1px solid rgba(255,255,255,.16); }
 
 /* Wide project / tour pickers in the floating bar — the only flexible items, so a
@@ -85,7 +85,6 @@ body { display: flex; flex-direction: column; }
 .pickbtn.pb-loading { cursor: default; color: rgba(255,255,255,.72); font-weight: 500; }
 .pickbtn.pb-loading .pb-ico, .pickbtn.pb-loading .pb-chev, .pickbtn.pb-loading .pb-tag { display: none; }
 .pickbtn.loading-wave::after { background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.22) 50%, transparent 80%); }
-.bar .gps { margin-left: 0; }
 
 /* Project chip in the top bar — opens the full-screen picker. */
 .projbtn {
@@ -184,7 +183,14 @@ body { display: flex; flex-direction: column; }
 }
 .proj-card.new .pc-name { color: var(--purple-deep); }
 .proj-card .pc-tick { position: absolute; top: 12px; right: 13px; color: var(--purple); font-size: 16px; }
-.gps { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 12px; font-family: var(--mono); opacity: .95; }
+/* GPS accuracy chip — sits beside the counters, same pill look + height. */
+.gps {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; font-family: var(--mono); color: var(--ink);
+  background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  line-height: 1.35;
+}
 .gps .dot { width: 9px; height: 9px; border-radius: 50%; background: #c0392b; box-shadow: 0 0 0 0 rgba(255,255,255,.4); }
 .gps .dot.ok { background: #2ecc71; }
 .gps .dot.mid { background: #f1c40f; }
@@ -311,14 +317,17 @@ body { display: flex; flex-direction: column; }
 
 /* HUD counters — sits just above the bottom action bar so it never collides
    with the top bar / editing banner. */
-.hud {
-  position: absolute; left: 50%; transform: translateX(-50%);
+.hudrow {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 9;
   bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 28px);
+  display: flex; align-items: stretch; gap: 6px; width: max-content; max-width: calc(100% - 16px);
+}
+.hud {
   background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6); border-radius: 999px;
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   padding: 7px 15px; font-size: 12.5px; font-weight: 600; color: var(--ink);
   display: flex; align-items: center; gap: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.12);
-  white-space: nowrap; width: max-content; max-width: calc(100% - 16px);   /* one line */
+  white-space: nowrap;   /* one line — the .hudrow sizes to fit */
 }
 /* Weak-GPS notice — sits above the counters, semi-transparent frosted pill. */
 .gpswait {

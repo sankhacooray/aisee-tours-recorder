@@ -355,7 +355,7 @@ function newProjectCard() {
 function openNewProject() {
   $('npName').value = ''; $('npDesc').value = ''; $('npMsg').textContent = ''; $('npMsg').className = 'msg';
   $('npGo').disabled = true; $('npGo').textContent = 'Create project';
-  show('newProjSheet'); setTimeout(function () { $('npName').focus(); }, 50);
+  show('newProjSheet'); focusNow($('npName'));
 }
 function createProject() {
   var name = $('npName').value.trim();
@@ -616,7 +616,7 @@ function setRecording(on) {
 function openNameSheet() {
   $('tName').value = tourName || '';
   $('nameGo').disabled = !$('tName').value.trim();
-  show('nameSheet'); setTimeout(function () { $('tName').focus(); }, 50);
+  show('nameSheet'); focusNow($('tName'));
 }
 function submitName() {
   var v = $('tName').value.trim();
@@ -1296,6 +1296,16 @@ function wireUi() {
   $('nameGo').addEventListener('click', submitName);
   $('npName').addEventListener('input', function () { if ($('npGo').textContent !== 'Creating…') $('npGo').disabled = !$('npName').value.trim(); });
   $('npGo').addEventListener('click', createProject);
+  $('npName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('npDesc').focus(); } });
+  // Keep the keyboard up while a form screen is open: taps on the panel, labels
+  // or the primary button don't steal focus from the field being typed in.
+  // (Cancel / ✕ still blur — they close the screen anyway.)
+  document.querySelectorAll('.formscreen').forEach(function (fs) {
+    fs.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('input, textarea, [data-close]')) return;
+      e.preventDefault();
+    });
+  });
   $('linkRerec').addEventListener('click', cancelLinkResolve);
   $('helpBtn').addEventListener('click', function () { show('helpScreen'); });
   $('helpClose').addEventListener('click', function () { hide('helpScreen'); });
@@ -1332,6 +1342,11 @@ function wireUi() {
     if (e.key === 'Escape') { $('profilePop').hidden = true; hide('helpScreen'); hide('projScreen'); hide('tourScreen'); }
   });
 }
+
+/* Focus inside the tap handler itself (iOS only raises the keyboard for a
+ * focus() made synchronously in the user gesture), with a retry once the
+ * overlay has painted. */
+function focusNow(el) { try { el.focus(); } catch (e) {} setTimeout(function () { if (document.activeElement !== el) el.focus(); }, 80); }
 
 /* ── Tiny helpers ────────────────────────────────────────── */
 function show(id) { $(id).hidden = false; }

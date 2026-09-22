@@ -125,6 +125,15 @@ body { display: flex; flex-direction: column; }
   display: flex; flex-direction: column; gap: 8px;
 }
 .pick-body .hint, .pick-body .msg { margin: 6px 4px; }
+/* Form variant (new project / name tour): panel hugs its content instead of
+   stretching to the bottom, so the keyboard gets the empty lower half. */
+.formscreen { z-index: 200; }                       /* above the pickers it opens from */
+.form-body { bottom: auto; max-height: calc(100% - var(--bar-bottom) - 2 * var(--gap)); padding: 14px 14px 10px; gap: 0; }
+.form-body label { color: var(--ink); }
+.form-body input, .form-body textarea { background: rgba(255,255,255,.85); }
+.form-body textarea { min-height: 64px; }
+.form-body .row { margin-top: 2px; }
+.form-body .msg:empty { display: none; }
 
 /* Loading "wave" — a light sheen sweeping across a card while its data loads. */
 .loading-wave { position: relative; overflow: hidden; }
@@ -336,7 +345,6 @@ body { display: flex; flex-direction: column; }
    sit above it (and the toast) — otherwise it renders behind and the save
    appears to hang at "Linking path…". */
 #linkSheet { z-index: 300; }
-#newProjSheet { z-index: 200; }   /* opens over the full-screen project picker */
 .sheet[hidden] { display: none; }
 .sheet .card {
   width: 100%; max-width: 520px; background: #fff; border-radius: 18px 18px 0 0;

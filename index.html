@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-134157" />
+<link rel="stylesheet" href="styles.css?v=20260922-135243" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -143,12 +143,18 @@
     </div>
   </div>
 
-  <!-- Name a new tour — required before recording starts -->
-  <div class="sheet" id="nameSheet" hidden>
-    <div class="card">
-      <h2>Name this tour</h2>
-      <p class="hint">Give the new tour a name before you start recording. You can change it when saving.</p>
-      <label>Tour name *<input id="tName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" /></label>
+  <!-- Name a new tour — required before recording starts. Full-screen frosted
+       layout; the form sits up top so the keyboard owns the empty bottom half. -->
+  <div class="pickscreen formscreen" id="nameSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Name this tour</span>
+        <span class="pick-sub">Required before recording — you can change it when saving</span>
+      </div>
+      <button class="iconbtn" data-close="nameSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Tour name *<input id="tName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" enterkeyhint="go" /></label>
       <div class="row">
         <button class="btn ghost" data-close="nameSheet">Cancel</button>
         <button class="btn primary" id="nameGo" disabled>Start recording</button>
@@ -156,13 +162,19 @@
     </div>
   </div>
 
-  <!-- Create a new project (admins) — opened from the first card of the project picker -->
-  <div class="sheet" id="newProjSheet" hidden>
-    <div class="card">
-      <h2>New project</h2>
-      <p class="hint">A project is a site or venue. Tours you record are saved under it.</p>
-      <label>Project name *<input id="npName" type="text" placeholder="e.g. Singapore Botanic Gardens" autocomplete="off" /></label>
-      <label>Description<textarea id="npDesc" placeholder="Optional"></textarea></label>
+  <!-- Create a new project (admins) — opened from the first card of the project
+       picker. Same full-screen frosted layout; bottom half left for the keyboard. -->
+  <div class="pickscreen formscreen" id="newProjSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Create new project</span>
+        <span class="pick-sub">A site or venue — tours you record are saved under it</span>
+      </div>
+      <button class="iconbtn" data-close="newProjSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Project name *<input id="npName" type="text" placeholder="e.g. Singapore Botanic Gardens" autocomplete="off" enterkeyhint="next" /></label>
+      <label>Description<textarea id="npDesc" rows="2" placeholder="Optional"></textarea></label>
       <div class="row">
         <button class="btn ghost" data-close="newProjSheet">Cancel</button>
         <button class="btn primary" id="npGo" disabled>Create project</button>
@@ -301,6 +313,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-134157"></script>
+  <script src="app.js?v=20260922-135243"></script>
 </body>
 </html>

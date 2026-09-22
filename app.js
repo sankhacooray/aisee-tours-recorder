@@ -357,25 +357,54 @@ function openNewProject() {
   $('npGo').disabled = true; $('npGo').textContent = 'Create project';
   show('newProjSheet'); focusNow($('npName'));
 }
+/* Lock the whole form (inputs, Cancel, ✕) while the backend creates the project. */
+function setNewProjBusy(on) {
+  var fs = $('newProjSheet');
+  fs.querySelectorAll('input, textarea, button').forEach(function (el) { el.disabled = on; });
+  fs.querySelector('.form-body').classList.toggle('loading-wave', on);
+  fs.classList.toggle('busy', on);
+  $('npGo').textContent = on ? 'Creating…' : 'Create project';
+  if (!on) $('npGo').disabled = !$('npName').value.trim();
+}
 function createProject() {
   var name = $('npName').value.trim();
   if (!name || $('npGo').disabled) return;
   var msg = $('npMsg'); msg.className = 'msg';
-  $('npGo').disabled = true; $('npGo').textContent = 'Creating…';
-  msg.textContent = 'Setting up the project — this can take a few seconds.';
+  var knownIds = projectsData.map(function (p) { return p.project_id; });
+  setNewProjBusy(true);
+  msg.textContent = 'Setting up the project — this can take several seconds.';
+
+  var done = function (p) {
+    setNewProjBusy(false);
+    projectsData.push({ project_id: p.project_id, name: p.name, description: p.description });
+    var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; $('projSel').appendChild(o);
+    hide('newProjSheet');
+    selectProject(p.project_id);
+    toast('Project “' + p.name + '” created');
+  };
+  var fail = function (e) {
+    setNewProjBusy(false);
+    msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err';
+  };
+
   postJson({ action: 'project.create', auth: AUTH.token, name: name,
              description: $('npDesc').value.trim(), orgId: (USER && USER.org_id) || '' }, 'project.create')
-    .then(function (res) {
-      var p = res.project || {};
-      projectsData.push({ project_id: p.project_id, name: p.name, description: p.description });
-      var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; $('projSel').appendChild(o);
-      hide('newProjSheet');
-      selectProject(p.project_id);
-      toast('Project “' + p.name + '” created');
-    })
+    .then(function (res) { done(res.project || {}); })
     .catch(function (e) {
-      msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err';
-      $('npGo').disabled = false; $('npGo').textContent = 'Create project';
+      // Creating a project (new Sheet + Drive folder) is slow, and on mobile the
+      // reply can get lost ("Failed to fetch") even though the backend finished.
+      // Before reporting failure, check whether a project with this name now
+      // exists — if so it went through (and a retry would make a duplicate).
+      if (!(e instanceof TypeError || /did not return JSON/.test(e.message))) return fail(e);   // a real backend rejection
+      msg.textContent = 'Checking whether the project was created…';
+      getJson('action=projects&auth=' + encodeURIComponent(AUTH.token), 'project.create.verify')
+        .then(function (res) {
+          var hit = (res && res.projects || []).filter(function (p) {
+            return knownIds.indexOf(p.project_id) === -1 && String(p.name).trim() === name;
+          })[0];
+          if (hit) done(hit); else fail(e);
+        })
+        .catch(function () { fail(e); });
     });
 }
 

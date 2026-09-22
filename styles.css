@@ -134,6 +134,8 @@ body { display: flex; flex-direction: column; }
 .form-body textarea { min-height: 64px; }
 .form-body .row { margin-top: 2px; }
 .form-body .msg:empty { display: none; }
+.formscreen.busy .form-body label, .formscreen.busy .btn.ghost, .formscreen.busy [data-close] { opacity: .5; }
+.formscreen.busy .pick-head [data-close] { pointer-events: none; }
 
 /* Loading "wave" — a light sheen sweeping across a card while its data loads. */
 .loading-wave { position: relative; overflow: hidden; }

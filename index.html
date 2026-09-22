@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-174651" />
+<link rel="stylesheet" href="styles.css?v=20260922-180856" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -131,8 +131,7 @@
     </header>
     <div class="pick-body form-body">
       <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" autocomplete="off" enterkeyhint="next" /></label>
-      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" autocomplete="off" enterkeyhint="next" /></label>
-      <label>Briefing<textarea id="poiBrief" rows="2" placeholder="What the visitor hears here…"></textarea></label>
+      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" autocomplete="off" enterkeyhint="done" /></label>
       <div class="fieldlabel">Geofence radius</div>
       <!-- Same presets as the dashboard's POI editor (15 / 20 / 25 / 35 m) -->
       <div class="segs" id="poiRadSegs">
@@ -276,7 +275,7 @@
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-star"></i></span>
-        <div class="help-text"><b>1POI</b><p>A primary point of interest — a main stop. Give it a name and a short note; this is what visitors will hear about.</p></div>
+        <div class="help-text"><b>1POI</b><p>A primary point of interest — a main stop. Give it a name (and optionally a category) — the briefing visitors hear is written later in the dashboard.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-regular fa-star"></i></span>
@@ -349,6 +348,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-174651"></script>
+  <script src="app.js?v=20260922-180856"></script>
 </body>
 </html>

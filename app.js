@@ -722,14 +722,14 @@ function openPoi(type) {
   if (farOutside) return toast('Walk back to the tour area first');
   pendingPoi = { lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
   $('poiCoord').textContent = fmt(pendingPoi.lat) + ', ' + fmt(pendingPoi.lng) + '  (±' + pendingPoi.accuracy_m + 'm)';
-  $('poiName').value = ''; $('poiCat').value = ''; $('poiBrief').value = ''; setSeg('poiRadSegs', '25');
+  $('poiName').value = ''; $('poiCat').value = ''; setSeg('poiRadSegs', '25');
   show('poiSheet'); focusNow($('poiName'));
 }
 function savePoi() {
   var name = $('poiName').value.trim();
   if (!name) return toast('POI needs a name');
   var m = { kind: 'poi', poi_type: pendingPoiType, lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
-    name: name, category: $('poiCat').value.trim(), briefing_md: $('poiBrief').value.trim(),
+    name: name, category: $('poiCat').value.trim(), briefing_md: '',   // briefings are written later in the dashboard
     geofence_radius_m: Number(segVal('poiRadSegs')) || 25 };
   poiVisual(m, poiNumber(pendingPoiType));
   marks.push(m); hide('poiSheet'); afterMark((isSecondary(m) ? '2POI' : '1POI') + ' “' + name + '” dropped');
@@ -1424,7 +1424,7 @@ function wireUi() {
     g.addEventListener('click', function (e) { var b = e.target.closest('.seg'); if (b && !b.disabled) setSeg(g.id, b.getAttribute('data-v')); });
   });
   $('poiName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('poiCat').focus(); } });
-  $('poiCat').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('poiBrief').focus(); } });
+  $('poiCat').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); savePoi(); } });
   $('rName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('rDesc').focus(); } });
   $('recenterBtn').addEventListener('click', recenter);
   $('openToursApp').hidden = !platformOS();

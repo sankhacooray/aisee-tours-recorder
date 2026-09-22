@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260716-164039" />
+<link rel="stylesheet" href="styles.css?v=20260922-115141" />
 </head>
 <body>
   <!-- Top bar -->
@@ -46,6 +46,17 @@
 
   <!-- Map -->
   <div id="map"></div>
+
+  <!-- Locating overlay — covers the map until the first GPS fix, so the map
+       never flashes the default spot and then jumps to where you are. -->
+  <div class="locating" id="locating" hidden>
+    <div class="loc-card">
+      <span class="loc-pulse"><i class="fa-solid fa-location-crosshairs"></i></span>
+      <div class="loc-title" id="locTitle">Finding your location…</div>
+      <div class="loc-sub" id="locSub">Getting a GPS fix</div>
+      <button class="btn ghost" id="locSkip" hidden>Show map anyway</button>
+    </div>
+  </div>
 
   <!-- Top banner stack — editing banner + "too far" flag stack vertically with
        a gap, so neither overlaps regardless of how many lines each wraps to. -->
@@ -253,6 +264,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260716-164039"></script>
+  <script src="app.js?v=20260922-115141"></script>
 </body>
 </html>

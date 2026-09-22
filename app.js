@@ -238,10 +238,12 @@ function bootstrap() {
                  (res.user && res.user.email) || AUTH.email || '');
       fillProjects(res.projects || [], res.defaultProjectId || '');
       mapsKey = res.mapsKey || '';
-      if (!mapsKey) { showMapMsg('No Maps key set on the backend — run setMapsApiKey() in the editor.'); return; }
+      if (!mapsKey) { showMapMsg('No Maps key set on the backend — add the MAPS_API_KEY Script Property.'); return; }
+      showLocating();
+      startGeo();   // GPS warms up while the Maps script loads
       ensureMaps(mapsKey, function (ok) {
         if (!ok) { showMapMsg('Google Maps failed to load — check the key, enabled APIs, and billing.'); return; }
-        initMap(); startGeo(); maybeOfferRestore();
+        initMap(); maybeOfferRestore();
       });
     })
     .catch(function (e) { showMapMsg('Could not reach the backend: ' + e.message); });
@@ -323,11 +325,42 @@ function ensureMaps(key, cb) {
   document.head.appendChild(s);
 }
 
-function showMapMsg(t) { $('map').innerHTML = '<div class="map-msg">' + t + '</div>'; }
+function showMapMsg(t) { hideLocating(); $('map').innerHTML = '<div class="map-msg">' + t + '</div>'; }
+
+/* ── Locating overlay ────────────────────────────────────────
+ * Shown from bootstrap until BOTH the map has rendered and the first GPS fix
+ * is in, so the map opens already centred on the walker. After a few seconds
+ * without a fix (or if location is denied) it offers "Show map anyway". */
+var LASTFIX_KEY = 'tours.recorder.lastFix';
+var locMapIdle = false, locHadFix = false, locDone = false, locTimer = null;
+function showLocating() {
+  locDone = false; $('locating').hidden = false;
+  $('locating').classList.remove('out');
+  clearTimeout(locTimer);
+  locTimer = setTimeout(function () {
+    if (locDone) return;
+    $('locSub').textContent = 'Still searching — open sky helps';
+    $('locSkip').hidden = false;
+  }, 8000);
+}
+function hideLocating() {
+  if (locDone) return;
+  locDone = true; clearTimeout(locTimer);
+  var el = $('locating');
+  el.classList.add('out');
+  setTimeout(function () { el.hidden = true; }, 350);
+}
+function maybeRevealMap() { if (locMapIdle && locHadFix) hideLocating(); }
+function storedFix() {
+  try { var f = JSON.parse(localStorage.getItem(LASTFIX_KEY) || 'null'); if (f && isFinite(f.lat) && isFinite(f.lng)) return f; } catch (e) {}
+  return null;
+}
 
 function initMap() {
+  // Open on the live fix if GPS beat the Maps script, else the last known spot.
+  var start = lastFix || storedFix() || { lat: 1.3066, lng: 103.8155 };
   map = new google.maps.Map($('map'), {
-    center: { lat: 1.3066, lng: 103.8155 }, zoom: 17, mapTypeId: 'roadmap',
+    center: { lat: start.lat, lng: start.lng }, zoom: 17, mapTypeId: 'roadmap',
     disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy'
   });
   map.addListener('dragstart', function () { follow = false; });
@@ -335,6 +368,9 @@ function initMap() {
   meMarker = new google.maps.Marker({ map: map, zIndex: 999,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#1769ff', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   accCircle = new google.maps.Circle({ map: map, fillColor: '#1769ff', fillOpacity: .10, strokeColor: '#1769ff', strokeOpacity: .35, strokeWeight: 1 });
+  if (lastFix) { meMarker.setPosition({ lat: lastFix.lat, lng: lastFix.lng });
+    accCircle.setCenter({ lat: lastFix.lat, lng: lastFix.lng }); accCircle.setRadius(Math.max(lastFix.accuracy_m, 3)); }
+  google.maps.event.addListenerOnce(map, 'idle', function () { locMapIdle = true; maybeRevealMap(); });
   $('hud').hidden = false;
 }
 
@@ -343,7 +379,16 @@ function startGeo() {
   if (!navigator.geolocation) { toast('No geolocation on this device'); return; }
   watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
 }
-function onErr(e) { setGps(null); toast('GPS error: ' + (e && e.message || e)); }
+function onErr(e) {
+  setGps(null);
+  if (!locDone && e && e.code === 1) {   // PERMISSION_DENIED
+    $('locTitle').textContent = 'Location access is off';
+    $('locSub').textContent = 'Allow location for this site to record routes';
+    $('locSkip').hidden = false;
+    return;
+  }
+  toast('GPS error: ' + (e && e.message || e));
+}
 function onPos(pos) {
   var c = pos.coords;
   lastFix = { lat: c.latitude, lng: c.longitude, accuracy_m: Math.round(c.accuracy) };
@@ -356,7 +401,13 @@ function onPos(pos) {
     saveDraft(false);   // throttled (≤ every 4s) so a lock mid-walk keeps the track
   }
   if (tourBox) checkArea();
-  if (follow && map) map.panTo(ll);
+  if (!locHadFix) {
+    // First fix: jump (don't animate) so there's no slide from the default spot.
+    locHadFix = true;
+    if (map) map.setCenter(ll);
+    maybeRevealMap();
+  } else if (follow && map) map.panTo(ll);
+  try { localStorage.setItem(LASTFIX_KEY, JSON.stringify({ lat: ll.lat, lng: ll.lng })); } catch (e) {}
 }
 function setGps(acc) {
   var dot = $('gpsDot'), txt = $('gpsText');
@@ -1051,6 +1102,7 @@ function copyDiagnostics() {
 
 /* ── UI wiring ───────────────────────────────────────────── */
 function wireUi() {
+  $('locSkip').addEventListener('click', hideLocating);
   $('recBtn').addEventListener('click', function () { setRecording(!recording); });
   $('cpBtn').addEventListener('click', addCheckpoint);
   $('poiBtn').addEventListener('click', openPoi);

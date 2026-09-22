@@ -111,6 +111,18 @@ body { display: flex; flex-direction: column; }
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,.18); box-shadow: 0 6px 22px rgba(0,0,0,.18);
 }
+/* Launcher-style "AiSee Tours" app shortcut in the project picker header. */
+.applaunch {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: 0; padding: 2px 4px; cursor: pointer; color: #fff; font-family: inherit;
+}
+.al-icon {
+  width: 46px; height: 46px; border-radius: 13px; overflow: hidden; display: block;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25); background: rgba(38,34,56,.5);
+}
+.al-icon img { width: 100%; height: 100%; display: block; opacity: .72; }
+.applaunch:active .al-icon img { opacity: 1; }
+.al-name { font-size: 10.5px; font-weight: 600; opacity: .9; white-space: nowrap; }
 .pick-htext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .pick-title { font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
 .pick-sub { font-size: 12.5px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -304,6 +316,21 @@ body { display: flex; flex-direction: column; }
   display: flex; align-items: center; gap: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.12);
   white-space: nowrap; width: max-content; max-width: calc(100% - 16px);   /* one line */
 }
+/* Weak-GPS notice — sits above the counters, semi-transparent frosted pill. */
+.gpswait {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 9;
+  bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 70px);
+  width: max-content; max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 11px; padding: 10px 14px;
+  background: rgba(26,31,28,.62); color: #fff; border-radius: 14px;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 4px 16px rgba(0,0,0,.16); pointer-events: none;
+  font-size: 12.5px; line-height: 1.35;
+}
+.gpswait i { font-size: 18px; color: #f1c40f; animation: pulse 1.6s infinite; flex: 0 0 auto; }
+.gpswait b { display: block; font-size: 13.5px; }
+.gpswait span { opacity: .88; }
+
 /* Colour-coded counters: checkpoints blue, POIs red — match the map markers. */
 #counts .c-cp { color: #1971C2; font-weight: 700; }
 #counts .c-poi { color: #D7263D; font-weight: 700; }

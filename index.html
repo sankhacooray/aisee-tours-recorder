@@ -18,7 +18,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-160124" />
+<link rel="stylesheet" href="styles.css?v=20260922-161659" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -77,6 +77,13 @@
     </div>
   </div>
 
+  <!-- Weak-GPS notice — Record stays disabled until accuracy is yellow/green -->
+  <div class="gpswait" id="gpsWait" hidden>
+    <i class="fa-solid fa-satellite-dish"></i>
+    <div><b>Waiting for a stronger GPS signal</b>
+      <span>Recording unlocks at ±30 m or better (<span id="gpsWaitAcc">no GPS fix yet</span>). Open sky helps.</span></div>
+  </div>
+
   <!-- Live counters -->
   <div class="hud" id="hud" hidden>
     <span id="recDot" class="recdot" hidden></span>
@@ -117,6 +124,11 @@
         <span class="pick-title">Choose a project</span>
         <span class="pick-sub">Tours you record are saved under it</span>
       </div>
+      <!-- Launcher-style shortcut into the installed AiSee Tours app (Android / iOS) -->
+      <button class="applaunch" id="openToursApp" aria-label="Open AiSee Tours app" title="Open AiSee Tours app" hidden>
+        <span class="al-icon"><img src="icon-192.png" alt="" width="44" height="44" /></span>
+        <span class="al-name">AiSee Tours</span>
+      </button>
       <button class="iconbtn" id="projClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
     </header>
     <div class="pick-body" id="projList"></div>
@@ -317,6 +329,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-160124"></script>
+  <script src="app.js?v=20260922-161659"></script>
 </body>
 </html>

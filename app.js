@@ -518,6 +518,7 @@ function initMap() {
   if (lastFix) { meMarker.setPosition({ lat: lastFix.lat, lng: lastFix.lng });
     accCircle.setCenter({ lat: lastFix.lat, lng: lastFix.lng }); accCircle.setRadius(Math.max(lastFix.accuracy_m, 3)); }
   google.maps.event.addListenerOnce(map, 'idle', function () { locMapIdle = true; maybeRevealMap(); });
+  syncRecBtn();   // apply the GPS gate before the first fix arrives
   $('hud').hidden = false;
 }
 
@@ -556,11 +557,21 @@ function onPos(pos) {
   } else if (follow && map) map.panTo(ll);
   try { localStorage.setItem(LASTFIX_KEY, JSON.stringify({ lat: ll.lat, lng: ll.lng })); } catch (e) {}
 }
+/* GPS quality gate: a red reading (no fix, or worse than ±GPS_OK_M) blocks
+ * STARTING a recording — a walk begun on a bad fix records a wandering path.
+ * Stopping is never blocked, and a dip mid-walk doesn't stop the recording. */
+var GPS_OK_M = 30;              // yellow/green threshold (matches the dot colours)
+var gpsBad = true;              // no fix yet counts as bad
 function setGps(acc) {
   var dot = $('gpsDot'), txt = $('gpsText');
-  if (acc == null) { dot.className = 'dot'; txt.textContent = 'no fix'; return; }
-  dot.className = 'dot ' + (acc <= 10 ? 'ok' : acc <= 30 ? 'mid' : '');
-  txt.textContent = '±' + acc + 'm';
+  if (acc == null) { dot.className = 'dot'; txt.textContent = 'no fix'; }
+  else {
+    dot.className = 'dot ' + (acc <= 10 ? 'ok' : acc <= GPS_OK_M ? 'mid' : '');
+    txt.textContent = '±' + acc + 'm';
+  }
+  gpsBad = acc == null || acc > GPS_OK_M;
+  $('gpsWaitAcc').textContent = acc == null ? 'no GPS fix yet' : 'now ±' + acc + ' m';
+  syncRecBtn();
 }
 
 /* ── Marker styling + focus pulse ────────────────────────── */
@@ -631,6 +642,7 @@ var MARK_BTNS = ['cpBtn', 'poiBtn', 'poi2Btn'];
  * be dropped while recording. */
 function onRecTap() {
   if (recording) { openSave(); return; }
+  if (gpsBad) { toast('Waiting for a stronger GPS signal'); return; }
   if (farOutside) { toast('Walk back to the tour area to record'); return; }
   if (!$('projSel').value) { toast('Pick a project first'); openProjectPicker(); return; }
   if (!editingRouteId && !tourName) { openNameSheet(); return; }
@@ -640,7 +652,11 @@ function syncRecBtn() {
   $('recBtn').classList.toggle('on', recording);
   $('recBtn').querySelector('span:last-child').textContent = recording ? 'Stop' : (started ? 'Resume' : 'Record');
   $('recDot').hidden = !recording;
-  MARK_BTNS.forEach(function (id) { $(id).disabled = !recording; });
+  // Record is blocked while away from a loaded tour, or (to start/resume) on a weak GPS fix.
+  var waitGps = !recording && gpsBad;
+  $('recBtn').disabled = farOutside || waitGps;
+  $('gpsWait').hidden = !waitGps || farOutside;
+  MARK_BTNS.forEach(function (id) { $(id).disabled = !recording || farOutside; });
 }
 function setRecording(on) {
   // Guard: don't let recording START while far outside a loaded tour's area.
@@ -1113,13 +1129,8 @@ function setFar(on) {
   if (on === farOutside) return;
   farOutside = on;
   $('farFlag').hidden = !on;
-  if (on) {
-    if (recording) setRecording(false);                 // stop logging junk while away
-    ['recBtn'].concat(MARK_BTNS).forEach(function (id) { $(id).disabled = true; });
-  } else {
-    $('recBtn').disabled = false;
-    syncRecBtn();
-  }
+  if (on && recording) setRecording(false);            // stop logging junk while away
+  syncRecBtn();
 }
 
 /* ── Splice a freshly-recorded segment into the existing path ─ */
@@ -1292,6 +1303,38 @@ function alongDistance(path, pt) {
 function num0(v) { var n = Number(v); return isNaN(n) ? '' : n; }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
+/* ── Open the installed AiSee Tours app ──────────────────────
+ * Both apps register the `aiseetours` scheme (for the login callback).
+ * Android: an intent: URL pinned to the package — Chrome only launches
+ * BROWSABLE activities, and the aiseetours://auth-callback filter is one; with no
+ * token in the fragment the app just comes to the front. If the app isn't
+ * installed, Chrome follows the fallback (a same-page #hash → toast, no reload).
+ * iOS: the bare scheme opens the app (it has no URL handler beyond its login
+ * sheet). If nothing takes over the page within ~2s, say it's not installed. */
+var TOURS_PKG = 'ai.aisee.tours';
+function platformOS() {
+  var ua = navigator.userAgent || '';
+  if (/Android/i.test(ua)) return 'android';
+  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+  return '';
+}
+var appOpenTimer = null;
+function openToursApp() {
+  var os = platformOS();
+  if (!os) return toast('Open this on an Android or iOS phone');
+  clearTimeout(appOpenTimer);
+  appOpenTimer = setTimeout(function () {
+    if (document.visibilityState === 'visible') toast('Couldn’t open AiSee Tours — is it installed?');
+  }, 2200);
+  if (os === 'android') {
+    var fallback = location.href.split('#')[0] + '#no-tours-app';
+    location.href = 'intent://auth-callback#Intent;scheme=aiseetours;package=' + TOURS_PKG +
+      ';S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
+  } else {
+    location.href = 'aiseetours://open';
+  }
+}
+
 /* ── Profile balloon (identity + sign out) ──── */
 function toggleProfile() {
   var pop = $('profilePop');
@@ -1339,6 +1382,15 @@ function wireUi() {
   $('nameGo').addEventListener('click', submitName);
   $('npName').addEventListener('input', function () { if ($('npGo').textContent !== 'Creating…') $('npGo').disabled = !$('npName').value.trim(); });
   $('npGo').addEventListener('click', createProject);
+  $('openToursApp').hidden = !platformOS();
+  $('openToursApp').addEventListener('click', openToursApp);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) clearTimeout(appOpenTimer); });
+  window.addEventListener('hashchange', function () {
+    if (location.hash !== '#no-tours-app') return;
+    history.replaceState(null, '', location.pathname + location.search);
+    clearTimeout(appOpenTimer);
+    toast('AiSee Tours isn’t installed on this phone');
+  });
   $('npName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('npDesc').focus(); } });
   // Keep the keyboard up while a form screen is open: taps on the panel, labels
   // or the primary button don't steal focus from the field being typed in.

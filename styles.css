@@ -89,27 +89,53 @@ body { display: flex; flex-direction: column; }
 .projbtn #projBtnLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projbtn i { font-size: 10px; opacity: .85; flex: 0 0 auto; }
 
-/* Full-screen project picker */
-.projscreen { position: fixed; inset: 0; z-index: 150; background: var(--bg); display: flex; flex-direction: column; }
-.projscreen[hidden] { display: none; }
-.proj-bar {
-  height: calc(var(--bar-h) + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top);
-  display: flex; align-items: center; gap: 12px; padding-left: 18px; padding-right: 12px;
-  background: var(--purple-deep); color: #fff; flex: 0 0 auto;
+/* Full-screen pickers (project / tour) — frosted veil over the map; the header
+   floats exactly where the app bar is (same margins + height) and stays put,
+   while the list panel below scrolls. */
+.pickscreen {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(20,32,26,.28);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.proj-title { font-family: var(--display); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
-.proj-bar .iconbtn { margin-left: auto; }
-.proj-body {
-  flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 620px; margin: 0 auto;
-  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
-  display: grid; gap: 10px; grid-template-columns: 1fr; align-content: start;
+.pick-head {
+  position: absolute; top: calc(env(safe-area-inset-top) + var(--gap)); left: var(--gap); right: var(--gap);
+  height: var(--fbar-h); display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px;
+  background: var(--glass-dark); color: #fff; border-radius: 16px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255,255,255,.18); box-shadow: 0 6px 22px rgba(0,0,0,.18);
 }
+.pick-htext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pick-title { font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+.pick-sub { font-size: 12.5px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-body {
+  position: absolute; top: calc(var(--bar-bottom) + var(--gap)); left: var(--gap); right: var(--gap);
+  bottom: calc(env(safe-area-inset-bottom) + var(--gap));
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: 10px; border-radius: 16px;
+  background: rgba(255,255,255,.40); border: 1px solid rgba(255,255,255,.5);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: 0 6px 22px rgba(0,0,0,.14);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.pick-body .hint, .pick-body .msg { margin: 6px 4px; }
+
+/* Loading "wave" — a light sheen sweeping across a card while its data loads. */
+.loading-wave { position: relative; overflow: hidden; }
+.loading-wave::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.75) 50%, transparent 80%);
+  transform: translateX(-100%); animation: wave 1.3s ease-in-out infinite;
+}
+@keyframes wave { to { transform: translateX(100%); } }
+.skel { display: block; height: 12px; border-radius: 6px; background: rgba(26,31,28,.10); }
+.skel.w40 { width: 40%; } .skel.w60 { width: 60%; } .skel.w25 { width: 25%; height: 20px; border-radius: 999px; }
+
 .proj-card {
-  position: relative; text-align: left; background: var(--card, #fff); border: 1.5px solid var(--line);
+  position: relative; text-align: left; background: rgba(255,255,255,.78); border: 1.5px solid rgba(255,255,255,.7);
   border-radius: 16px; padding: 15px 15px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px;
-  transition: border-color .12s, box-shadow .12s, transform .05s;
+  transition: border-color .12s, box-shadow .12s;
 }
-.proj-card:active { transform: translateY(1px); }
+.proj-card:active { background: #fff; }
 .proj-card.sel { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(45,106,79,.14); }
 .proj-card .pc-name { font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--ink); line-height: 1.2; }
 .proj-card .pc-desc { font-size: 12.5px; color: var(--ink-70); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -219,15 +245,16 @@ body { display: flex; flex-direction: column; }
 .farflag i { font-size: 16px; flex: 0 0 auto; }
 
 /* Tour picker list */
-.tourlist { max-height: 48vh; overflow-y: auto; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
 .tour-item {
   display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
-  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
-  font-family: inherit; cursor: pointer;
+  background: rgba(255,255,255,.78); border: 1.5px solid rgba(255,255,255,.7); border-radius: 14px; padding: 13px 15px;
+  font-family: inherit; cursor: pointer; flex: 0 0 auto;
 }
 .tour-item:active { background: var(--bg); }
 .tour-item.sel { border-color: var(--purple); box-shadow: inset 0 0 0 1px var(--purple); }
 .tour-item.new .tour-name { color: var(--purple-deep); }
+.tour-skel { gap: 8px; cursor: default; }
+#tourList.busy .tour-item:not(.loading-wave) { opacity: .55; pointer-events: none; }
 .tour-name { font-weight: 700; font-size: 15px; color: var(--ink); font-family: var(--display); }
 .tour-meta { font-size: 12.5px; color: var(--ink-70); }
 

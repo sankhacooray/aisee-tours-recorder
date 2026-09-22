@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-121149" />
+<link rel="stylesheet" href="styles.css?v=20260922-132511" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
@@ -107,24 +107,29 @@
     </div>
   </div>
 
-  <!-- Project picker — full-screen, replaces the native <select> dropdown -->
-  <div class="projscreen" id="projScreen" hidden>
-    <header class="proj-bar">
-      <span class="proj-title">Choose a project</span>
+  <!-- Project picker — full-screen frosted overlay; header sits exactly where the
+       app bar is (fixed), the card list below scrolls. -->
+  <div class="pickscreen" id="projScreen" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Choose a project</span>
+        <span class="pick-sub">Tours you record are saved under it</span>
+      </div>
       <button class="iconbtn" id="projClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
     </header>
-    <div class="proj-body" id="projList"></div>
+    <div class="pick-body" id="projList"></div>
   </div>
 
-  <!-- Tour picker — open an existing route to extend -->
-  <div class="sheet" id="tourSheet" hidden>
-    <div class="card">
-      <h2>Choose a tour</h2>
-      <p class="hint">Start a new tour, or pick a recorded one to edit — your new walk and POIs are
-        added on top of it and the existing path is kept.</p>
-      <div class="tourlist" id="tourList"><p class="hint">Loading…</p></div>
-      <div class="row"><button class="btn ghost" data-close="tourSheet">Cancel</button></div>
-    </div>
+  <!-- Tour picker — same layout: "New tour" first, then the project's saved tours to edit -->
+  <div class="pickscreen" id="tourScreen" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Choose a tour</span>
+        <span class="pick-sub">Start a new one, or pick a saved tour to edit</span>
+      </div>
+      <button class="iconbtn" id="tourClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body" id="tourList"></div>
   </div>
 
   <!-- Conflict resolver — choose how a new segment links back to the existing path -->
@@ -281,6 +286,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-121149"></script>
+  <script src="app.js?v=20260922-132511"></script>
 </body>
 </html>

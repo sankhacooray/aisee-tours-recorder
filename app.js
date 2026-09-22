@@ -286,22 +286,26 @@ function renderProjectCards() {
     var name = document.createElement('span'); name.className = 'pc-name'; name.textContent = p.name || p.project_id;
     card.appendChild(name);
     if (p.description) { var d = document.createElement('span'); d.className = 'pc-desc'; d.textContent = p.description; card.appendChild(d); }
-    var count = document.createElement('span'); count.className = 'pc-count'; count.textContent = '… tours'; card.appendChild(count);
+    // Tour count arrives from a second request — until then the card shows a
+    // skeleton pill with a sweeping "wave" so it reads as still loading.
+    var count = document.createElement('span'); count.className = 'skel w25'; card.appendChild(count);
+    card.classList.add('loading-wave');
     if (p.project_id === cur) { var t = document.createElement('i'); t.className = 'fa-solid fa-circle-check pc-tick'; card.appendChild(t); }
     card.addEventListener('click', function () { selectProject(p.project_id); });
     list.appendChild(card);
-    loadProjectCount(p.project_id, count);
+    loadProjectCount(p.project_id, count, card);
   });
 }
-function loadProjectCount(pid, el) {
-  if (!AUTH || !AUTH.token) { el.textContent = '— tours'; return; }
+function loadProjectCount(pid, el, card) {
+  var set = function (txt) { el.className = 'pc-count'; el.textContent = txt; card.classList.remove('loading-wave'); };
+  if (!AUTH || !AUTH.token) { set('— tours'); return; }
   fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
     .then(function (r) { return r.json(); })
     .then(function (res) {
       var n = (res && res.ok) ? (typeof res.count === 'number' ? res.count : (res.routes ? res.routes.length : null)) : null;
-      el.textContent = (n == null ? '—' : n) + ' tour' + (n === 1 ? '' : 's');
+      set((n == null ? '—' : n) + ' tour' + (n === 1 ? '' : 's'));
     })
-    .catch(function () { el.textContent = '— tours'; });
+    .catch(function () { set('— tours'); });
 }
 function selectProject(pid) {
   if (pid !== $('projSel').value && (editingRouteId || hasUnsavedWork())) {
@@ -820,18 +824,24 @@ function openTourPicker() {
   if (!pid) return toast('Pick a project first');
   var list = $('tourList'); list.innerHTML = '';
   list.appendChild(newTourItem());
-  list.insertAdjacentHTML('beforeend', '<p class="hint" id="tourLoading">Loading tours…</p>');
-  show('tourSheet');
+  // Skeleton cards with a loading wave until the saved-tour list arrives.
+  var skel = '';
+  for (var k = 0; k < 3; k++) skel += '<div class="tour-item loading-wave tour-skel"><span class="skel w60"></span><span class="skel w40"></span></div>';
+  list.insertAdjacentHTML('beforeend', skel);
+  show('tourScreen');
   fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
     .then(function (r) { return r.json(); })
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not load tours');
       renderTourList(res.routes || []);
     })
-    .catch(function (e) { var l = $('tourLoading'); if (l) l.outerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+    .catch(function (e) { clearTourSkels(); $('tourList').insertAdjacentHTML('beforeend', '<p class="msg err">' + esc(e.message) + '</p>'); });
 }
 
 /* Discarding unsaved work (or leaving a loaded tour) needs a confirm. */
+function clearTourSkels() {
+  Array.prototype.forEach.call(document.querySelectorAll('#tourList .tour-skel'), function (el) { el.remove(); });
+}
 function okToLeaveTour() {
   if (!hasUnsavedWork()) return true;
   return confirm('Discard the unsaved recording on this tour?');
@@ -842,7 +852,7 @@ function newTourItem() {
   btn.innerHTML = '<span class="tour-name"><i class="fa-solid fa-plus"></i>&nbsp; New tour</span>' +
     '<span class="tour-meta">Record a fresh route</span>';
   btn.addEventListener('click', function () {
-    hide('tourSheet');
+    hide('tourScreen');
     if (!editingRouteId) return;              // already on a new tour — keep any work
     if (!okToLeaveTour()) return;
     resetRoute(); toast('New tour');
@@ -852,7 +862,7 @@ function newTourItem() {
 
 function renderTourList(routes) {
   var list = $('tourList');
-  var l = $('tourLoading'); if (l) l.remove();
+  clearTourSkels();
   if (!routes.length) { list.insertAdjacentHTML('beforeend', '<p class="hint">No saved tours in this project yet.</p>'); return; }
   routes.forEach(function (r) {
     var dm = Number(r.distance_m);
@@ -861,25 +871,30 @@ function renderTourList(routes) {
     btn.innerHTML = '<span class="tour-name">' + esc(r.name || r.route_id) + '</span>' +
       '<span class="tour-meta">' + esc(r.status || 'draft') + ' · ' + (r.poi_count || 0) + ' POI · ' + dist + '</span>';
     btn.addEventListener('click', function () {
-      if (r.route_id === editingRouteId) { hide('tourSheet'); return; }
+      if (r.route_id === editingRouteId) { hide('tourScreen'); return; }
       if (!okToLeaveTour()) return;
-      loadTour(r.route_id);
+      loadTour(r.route_id, btn);
     });
     list.appendChild(btn);
   });
 }
 
-function loadTour(routeId) {
+function loadTour(routeId, btn) {
   var pid = $('projSel').value;
-  var list = $('tourList'); list.innerHTML = '<p class="hint">Opening…</p>';
+  var list = $('tourList');
+  if (list.classList.contains('busy')) return;
+  list.classList.add('busy');                      // one open at a time
+  if (btn) btn.classList.add('loading-wave');      // wave on the tapped card while it opens
+  var done = function () { list.classList.remove('busy'); if (btn) btn.classList.remove('loading-wave'); };
+  var old = list.querySelector('.msg.err'); if (old) old.remove();
   follow = false;
   fetch(backendUrl() + '?action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
     .then(function (r) { return r.json(); })
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not open tour');
-      hydrateTour(res); hide('tourSheet');
+      done(); hydrateTour(res); hide('tourScreen');
     })
-    .catch(function (e) { list.innerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+    .catch(function (e) { done(); list.insertAdjacentHTML('beforeend', '<p class="msg err">' + esc(e.message) + '</p>'); });
 }
 
 /* Load a backend route bundle into the live editing state. */
@@ -1191,6 +1206,7 @@ function wireUi() {
   $('helpClose').addEventListener('click', function () { hide('helpScreen'); });
   $('projBtn').addEventListener('click', openProjectPicker);
   $('projClose').addEventListener('click', function () { hide('projScreen'); });
+  $('tourClose').addEventListener('click', function () { hide('tourScreen'); });
   $('poiSave').addEventListener('click', savePoi);
   $('saveGo').addEventListener('click', doSave);
   $('signinBtn').addEventListener('click', signIn);
@@ -1218,7 +1234,7 @@ function wireUi() {
     $('profilePop').hidden = true;
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { $('profilePop').hidden = true; hide('helpScreen'); hide('projScreen'); }
+    if (e.key === 'Escape') { $('profilePop').hidden = true; hide('helpScreen'); hide('projScreen'); hide('tourScreen'); }
   });
 }
 

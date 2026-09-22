@@ -90,6 +90,7 @@ function postJson(payload, context) {
 /* ── State ───────────────────────────────────────────────── */
 var AUTH = null;          // { email, name, token }
 var mapsKey = '';
+var USER = null;          // bootstrap identity { email, role, org_id, … }
 var map, meMarker, accCircle, trackPoly;
 var trackPath = [];      // [{lat,lng}] raw GPS samples while recording
 var marks = [];          // [{kind, lat, lng, accuracy_m, marker, name?, category?, briefing_md?, geofence_radius_m?}]
@@ -237,7 +238,9 @@ function bootstrap() {
       if (!res || !res.ok) { clearSession(); showSignIn((res && res.error) || 'Session expired — please sign in again.'); return; }
       setProfile((res.user && (res.user.name || res.user.email)) || AUTH.name || AUTH.email,
                  (res.user && res.user.email) || AUTH.email || '');
+      USER = res.user || null;
       fillProjects(res.projects || [], res.defaultProjectId || '');
+      setBarLoading(false);
       mapsKey = res.mapsKey || '';
       if (!mapsKey) { showMapMsg('No Maps key set on the backend — add the MAPS_API_KEY Script Property.'); return; }
       showLocating();
@@ -251,6 +254,18 @@ function bootstrap() {
 }
 
 var projectsData = [];   // [{project_id, name, description}] — backs the picker
+
+/* App-bar pickers show a skeleton wave + "Loading…" until bootstrap is back. */
+function setBarLoading(on) {
+  ['projBtn', 'tourBtn'].forEach(function (id) {
+    $(id).disabled = on;
+    $(id).classList.toggle('pb-loading', on);
+    $(id).classList.toggle('loading-wave', on);
+  });
+  if (!on) { syncProjLabel(); syncTourLabel(); }
+}
+/* project.create is admin-only on the backend; only offer it to those roles. */
+function canCreateProject() { return !!USER && (USER.role === 'aisee' || USER.role === 'admin'); }
 
 function fillProjects(projects, defaultProjectId) {
   projectsData = projects || [];
@@ -273,13 +288,14 @@ function syncProjLabel() {
 
 /* Full-screen project picker (replaces the native <select> dropdown). */
 function openProjectPicker() {
-  if (!projectsData.length) return toast('No projects available');
+  if (!projectsData.length && !canCreateProject()) return toast('No projects available');
   renderProjectCards();
   show('projScreen');
 }
 function renderProjectCards() {
   var list = $('projList'); list.innerHTML = '';
   var cur = $('projSel').value;
+  if (canCreateProject()) list.appendChild(newProjectCard());
   projectsData.forEach(function (p) {
     var card = document.createElement('button');
     card.className = 'proj-card' + (p.project_id === cur ? ' sel' : '');
@@ -296,6 +312,42 @@ function renderProjectCards() {
     loadProjectCount(p.project_id, count, card);
   });
 }
+function newProjectCard() {
+  var card = document.createElement('button');
+  card.className = 'proj-card new';
+  card.innerHTML = '<span class="pc-plus"><i class="fa-solid fa-plus"></i></span>' +
+    '<span style="display:flex;flex-direction:column;gap:3px;min-width:0"><span class="pc-name">Create new project</span>' +
+    '<span class="pc-desc">Add a new site or venue to record tours in</span></span>';
+  card.addEventListener('click', openNewProject);
+  return card;
+}
+function openNewProject() {
+  $('npName').value = ''; $('npDesc').value = ''; $('npMsg').textContent = ''; $('npMsg').className = 'msg';
+  $('npGo').disabled = true; $('npGo').textContent = 'Create project';
+  show('newProjSheet'); setTimeout(function () { $('npName').focus(); }, 50);
+}
+function createProject() {
+  var name = $('npName').value.trim();
+  if (!name || $('npGo').disabled) return;
+  var msg = $('npMsg'); msg.className = 'msg';
+  $('npGo').disabled = true; $('npGo').textContent = 'Creating…';
+  msg.textContent = 'Setting up the project — this can take a few seconds.';
+  postJson({ action: 'project.create', auth: AUTH.token, name: name,
+             description: $('npDesc').value.trim(), orgId: (USER && USER.org_id) || '' }, 'project.create')
+    .then(function (res) {
+      var p = res.project || {};
+      projectsData.push({ project_id: p.project_id, name: p.name, description: p.description });
+      var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; $('projSel').appendChild(o);
+      hide('newProjSheet');
+      selectProject(p.project_id);
+      toast('Project “' + p.name + '” created');
+    })
+    .catch(function (e) {
+      msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err';
+      $('npGo').disabled = false; $('npGo').textContent = 'Create project';
+    });
+}
+
 function loadProjectCount(pid, el, card) {
   var set = function (txt) { el.className = 'pc-count'; el.textContent = txt; card.classList.remove('loading-wave'); };
   if (!AUTH || !AUTH.token) { set('— tours'); return; }
@@ -1201,6 +1253,8 @@ function wireUi() {
   $('tName').addEventListener('input', function () { $('nameGo').disabled = !$('tName').value.trim(); });
   $('tName').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitName(); });
   $('nameGo').addEventListener('click', submitName);
+  $('npName').addEventListener('input', function () { if ($('npGo').textContent !== 'Creating…') $('npGo').disabled = !$('npName').value.trim(); });
+  $('npGo').addEventListener('click', createProject);
   $('linkRerec').addEventListener('click', cancelLinkResolve);
   $('helpBtn').addEventListener('click', function () { show('helpScreen'); });
   $('helpClose').addEventListener('click', function () { hide('helpScreen'); });

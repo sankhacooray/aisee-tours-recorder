@@ -122,6 +122,7 @@ function postJson(payload, context) {
 var AUTH = null;          // { email, name, token }
 var mapsKey = '';
 var USER = null;          // bootstrap identity { email, role, org_id, … }
+var ORGS = [];            // [{org_id, name}] — only sent for AiSee super-admins
 var map, meMarker, accCircle, trackPoly;
 var trackPath = [];      // [{lat,lng}] raw GPS samples while recording
 var marks = [];          // [{kind, lat, lng, accuracy_m, marker, name?, category?, briefing_md?, geofence_radius_m?}]
@@ -269,6 +270,7 @@ function bootstrap() {
       setProfile((res.user && (res.user.name || res.user.email)) || AUTH.name || AUTH.email,
                  (res.user && res.user.email) || AUTH.email || '');
       USER = res.user || null;
+      ORGS = res.orgs || [];
       fillProjects(res.projects || [], res.defaultProjectId || '');
       setBarLoading(false);
       mapsKey = res.mapsKey || '';
@@ -303,6 +305,7 @@ function fillProjects(projects, defaultProjectId) {
   var sel = $('projSel');
   while (sel.options.length > 1) sel.remove(1);
   projectsData.forEach(function (p) { var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; sel.appendChild(o); });
+
   var saved = ''; try { saved = localStorage.getItem(PROJECT_KEY) || ''; } catch (e) {}
   sel.value = saved || defaultProjectId || ((projectsData[0] || {}).project_id) || '';
   syncProjLabel();
@@ -355,12 +358,22 @@ function newProjectCard() {
 function openNewProject() {
   $('npName').value = ''; $('npDesc').value = ''; $('npMsg').textContent = ''; $('npMsg').className = 'msg';
   $('npGo').disabled = true; $('npGo').textContent = 'Create project';
+  // AiSee super-admins pick the org (default: the current project's org); for
+  // everyone else the backend uses their own org, so there's nothing to choose.
+  var super_ = USER && USER.role === 'aisee';
+  $('npOrgRow').hidden = !super_;
+  if (super_) {
+    var sel = $('npOrg'); sel.innerHTML = '';
+    ORGS.forEach(function (o) { var op = document.createElement('option'); op.value = o.org_id; op.textContent = o.name || o.org_id; sel.appendChild(op); });
+    var cur = projectsData.filter(function (p) { return p.project_id === $('projSel').value; })[0];
+    if (cur && cur.org_id && ORGS.some(function (o) { return o.org_id === cur.org_id; })) sel.value = cur.org_id;
+  }
   show('newProjSheet'); focusNow($('npName'));
 }
 /* Lock the whole form (inputs, Cancel, ✕) while the backend creates the project. */
 function setNewProjBusy(on) {
   var fs = $('newProjSheet');
-  fs.querySelectorAll('input, textarea, button').forEach(function (el) { el.disabled = on; });
+  fs.querySelectorAll('input, textarea, select, button').forEach(function (el) { el.disabled = on; });
   fs.querySelector('.form-body').classList.toggle('loading-wave', on);
   fs.classList.toggle('busy', on);
   $('npGo').textContent = on ? 'Creating…' : 'Create project';
@@ -376,7 +389,7 @@ function createProject() {
 
   var done = function (p) {
     setNewProjBusy(false);
-    projectsData.push({ project_id: p.project_id, name: p.name, description: p.description });
+    projectsData.push({ project_id: p.project_id, org_id: p.org_id || '', name: p.name, description: p.description });
     var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; $('projSel').appendChild(o);
     hide('newProjSheet');
     selectProject(p.project_id);
@@ -388,7 +401,8 @@ function createProject() {
   };
 
   postJson({ action: 'project.create', auth: AUTH.token, name: name,
-             description: $('npDesc').value.trim(), orgId: (USER && USER.org_id) || '' }, 'project.create')
+             description: $('npDesc').value.trim(),
+             orgId: (USER && USER.role === 'aisee') ? $('npOrg').value : '' }, 'project.create')   // ignored server-side for non-AiSee
     .then(function (res) { done(res.project || {}); })
     .catch(function (e) {
       // Creating a project (new Sheet + Drive folder) is slow, and on mobile the
@@ -1331,7 +1345,7 @@ function wireUi() {
   // (Cancel / ✕ still blur — they close the screen anyway.)
   document.querySelectorAll('.formscreen').forEach(function (fs) {
     fs.addEventListener('pointerdown', function (e) {
-      if (e.target.closest('input, textarea, [data-close]')) return;
+      if (e.target.closest('input, textarea, select, [data-close]')) return;
       e.preventDefault();
     });
   });

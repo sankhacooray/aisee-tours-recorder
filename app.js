@@ -1341,6 +1341,9 @@ function toggleProfile() {
   if (!pop.hidden) { pop.hidden = true; return; }
   setProfile((AUTH && (AUTH.name || AUTH.email)) || '', (AUTH && AUTH.email) || '');
   pop.hidden = false;
+  // Point the balloon's arrow at the profile button (it's no longer at the far right).
+  var b = $('profileBtn').getBoundingClientRect(), pr = pop.getBoundingClientRect();
+  pop.style.setProperty('--arrow-x', Math.round(b.left + b.width / 2 - pr.left - 6) + 'px');
 }
 function signOut() { clearSession(); hide('profilePop'); showSignIn('Signed out.'); }
 

@@ -18,28 +18,40 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-161659" />
+<link rel="stylesheet" href="styles.css?v=20260922-163403" />
 </head>
 <body>
   <!-- Top bar — floating, two rows: project picker, then tour picker. -->
   <header class="bar">
-    <div class="bar-row">
-      <!-- Button opens a full-screen project picker; the hidden <select> still
-           holds the chosen value + the project list (the rest of the app reads it). -->
-      <button class="pickbtn pb-loading loading-wave" id="projBtn" aria-label="Choose project" title="Choose project" disabled>
-        <i class="fa-solid fa-layer-group pb-ico"></i><span class="pb-label" id="projBtnLabel">Loading projects…</span><i class="fa-solid fa-chevron-down pb-chev"></i>
-      </button>
-      <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
-      <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
-      <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
-      <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
+    <div class="bar-main">
+      <div class="bar-row">
+        <!-- Button opens a full-screen project picker; the hidden <select> still
+             holds the chosen value + the project list (the rest of the app reads it). -->
+        <button class="pickbtn pb-loading loading-wave" id="projBtn" aria-label="Choose project" title="Choose project" disabled>
+          <i class="fa-solid fa-layer-group pb-ico"></i><span class="pb-label" id="projBtnLabel">Loading projects…</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+        </button>
+        <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
+        <div class="bar-tail">
+          <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
+          <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
+        </div>
+      </div>
+      <div class="bar-row">
+        <!-- Tour picker — "New tour" by default; picking a saved tour opens it for editing. -->
+        <button class="pickbtn pb-loading loading-wave" id="tourBtn" aria-label="Choose tour" title="Choose tour" disabled>
+          <i class="fa-solid fa-route pb-ico"></i><span class="pb-label" id="tourBtnLabel">Loading tours…</span><span class="pb-tag" id="tourBtnTag" hidden>new</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+        </button>
+        <div class="bar-tail">
+          <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
+        </div>
+      </div>
     </div>
-    <div class="bar-row">
-      <!-- Tour picker — "New tour" by default; picking a saved tour opens it for editing. -->
-      <button class="pickbtn pb-loading loading-wave" id="tourBtn" aria-label="Choose tour" title="Choose tour" disabled>
-        <i class="fa-solid fa-route pb-ico"></i><span class="pb-label" id="tourBtnLabel">Loading tours…</span><span class="pb-tag" id="tourBtnTag" hidden>new</span><i class="fa-solid fa-chevron-down pb-chev"></i>
-      </button>
-    </div>
+    <!-- Launcher-style shortcut into the installed AiSee Tours app (Android / iOS),
+         spanning both rows on the right. -->
+    <button class="applaunch" id="openToursApp" aria-label="Open AiSee Tours app" title="Open AiSee Tours app" hidden>
+      <span class="al-icon"><img src="icon-192.png" alt="" width="44" height="44" /></span>
+      <span class="al-name">AiSee Tours</span>
+    </button>
   </header>
 
   <!-- Profile balloon (anchored under the profile button) -->
@@ -124,11 +136,6 @@
         <span class="pick-title">Choose a project</span>
         <span class="pick-sub">Tours you record are saved under it</span>
       </div>
-      <!-- Launcher-style shortcut into the installed AiSee Tours app (Android / iOS) -->
-      <button class="applaunch" id="openToursApp" aria-label="Open AiSee Tours app" title="Open AiSee Tours app" hidden>
-        <span class="al-icon"><img src="icon-192.png" alt="" width="44" height="44" /></span>
-        <span class="al-name">AiSee Tours</span>
-      </button>
       <button class="iconbtn" id="projClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
     </header>
     <div class="pick-body" id="projList"></div>
@@ -329,6 +336,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-161659"></script>
+  <script src="app.js?v=20260922-163403"></script>
 </body>
 </html>

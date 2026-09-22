@@ -40,7 +40,7 @@ body { display: flex; flex-direction: column; }
 .bar {
   position: absolute; z-index: 30;
   top: calc(env(safe-area-inset-top) + var(--gap)); left: var(--gap); right: var(--gap);
-  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  display: flex; align-items: stretch; gap: 6px; padding: 8px;
   background: var(--glass-dark); color: #fff; border-radius: 16px;
   -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,.18);
@@ -57,7 +57,11 @@ body { display: flex; flex-direction: column; }
 }
 .projsel option { color: #000; }
 
+.bar-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .bar-row { display: flex; align-items: center; gap: 4px; height: var(--fbar-row); min-width: 0; }
+/* Same fixed width on both rows, so the project + tour pickers line up. */
+.bar-tail { flex: 0 0 72px; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.bar .applaunch { align-self: center; padding: 0 2px 0 8px; border-left: 1px solid rgba(255,255,255,.16); }
 
 /* Wide project / tour pickers in the floating bar — the only flexible items, so a
    long name ellipsizes instead of pushing the icons off-screen. */
@@ -81,7 +85,7 @@ body { display: flex; flex-direction: column; }
 .pickbtn.pb-loading { cursor: default; color: rgba(255,255,255,.72); font-weight: 500; }
 .pickbtn.pb-loading .pb-ico, .pickbtn.pb-loading .pb-chev, .pickbtn.pb-loading .pb-tag { display: none; }
 .pickbtn.loading-wave::after { background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.22) 50%, transparent 80%); }
-.bar .gps { margin-left: 6px; }
+.bar .gps { margin-left: 0; }
 
 /* Project chip in the top bar — opens the full-screen picker. */
 .projbtn {
@@ -200,7 +204,7 @@ body { display: flex; flex-direction: column; }
 }
 .popover[hidden] { display: none; }
 .popover::before {
-  content: ""; position: absolute; top: -6px; right: 20px; width: 12px; height: 12px;
+  content: ""; position: absolute; top: -6px; left: var(--arrow-x, calc(100% - 30px)); width: 12px; height: 12px;
   background: #fff; border-left: 1px solid var(--line); border-top: 1px solid var(--line);
   transform: rotate(45deg);
 }

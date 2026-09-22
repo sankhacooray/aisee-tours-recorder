@@ -97,6 +97,7 @@ var recording = false, started = false, follow = true, lastFix = null, watchId =
 
 /* ── Editing an existing tour ─────────────────────────────── */
 var editingRouteId = null;     // route_id when extending a loaded tour, else null
+var tourName = '';             // name given to a NEW tour before recording (required to start)
 var loadedRoute = null;        // the loaded Routes row (name/desc/status/… for the save sheet)
 var loadedVersion = null;      // content_version we loaded (optimistic concurrency)
 var existingPath = [];         // [{lat,lng}] decoded base track_polyline (frozen)
@@ -121,7 +122,7 @@ function markData(m) {
   return { kind: m.kind, existing: !!m.existing, poi_id: m.poi_id || null,
     lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m,
     name: m.name || '', category: m.category || '', briefing_md: m.briefing_md || '',
-    geofence_radius_m: m.geofence_radius_m };
+    poi_type: m.poi_type || 'primary', geofence_radius_m: m.geofence_radius_m };
 }
 /* True unsaved work worth recovering — a walked track, or any NEW (non-loaded) mark. */
 function hasUnsavedWork() {
@@ -134,7 +135,7 @@ function saveDraft(force) {
   lastDraftAt = now;
   var lr = loadedRoute ? { route_id: loadedRoute.route_id, name: loadedRoute.name, description: loadedRoute.description,
     status: loadedRoute.status, tracking_mode: loadedRoute.tracking_mode, content_version: loadedRoute.content_version } : null;
-  var draft = { v: 1, savedAt: now, projectId: $('projSel').value,
+  var draft = { v: 1, savedAt: now, projectId: $('projSel').value, tourName: tourName,
     editingRouteId: editingRouteId, loadedVersion: loadedVersion, loadedRoute: lr,
     existingPath: existingPath, trackPath: trackPath, started: started, saveOpId: saveOpId,
     marks: marks.map(markData) };
@@ -303,6 +304,10 @@ function loadProjectCount(pid, el) {
     .catch(function () { el.textContent = '— tours'; });
 }
 function selectProject(pid) {
+  if (pid !== $('projSel').value && (editingRouteId || hasUnsavedWork())) {
+    if (!confirm('Switch project? The current tour will be closed' + (hasUnsavedWork() ? ' and unsaved recording discarded.' : '.'))) return;
+    resetRoute();
+  }
   $('projSel').value = pid;
   try { localStorage.setItem(PROJECT_KEY, pid); } catch (e) {}
   syncProjLabel();
@@ -418,7 +423,8 @@ function setGps(acc) {
 
 /* ── Marker styling + focus pulse ────────────────────────── */
 var CP_COLOR = '#1971C2';   // checkpoints — blue (matches the counter text)
-var POI_COLOR = '#D7263D';  // POIs — red
+var POI_COLOR = '#D7263D';  // primary POIs (1POI) — red
+var POI2_COLOR = '#E8590C'; // secondary POIs (2POI) — orange
 
 /* A gentle expanding/shrinking ring under each point to draw the eye (and stay
  * visible even when the blue location dot sits right on top of a fresh mark).
@@ -455,35 +461,77 @@ function clearPulses() {
 
 /* Create the numbered red POI marker + geofence ring used for both new and
  * loaded POIs, so they look identical. */
+function isSecondary(m) { return m.poi_type === 'secondary'; }
 function poiVisual(m, n) {
-  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: m.name, zIndex: 5,
-    label: { text: String(n), color: '#fff', fontSize: '11px', fontWeight: '700' },
-    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 11, fillColor: POI_COLOR, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
+  var sec = isSecondary(m), color = sec ? POI2_COLOR : POI_COLOR;
+  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: m.name, zIndex: sec ? 4 : 5,
+    label: { text: String(n), color: '#fff', fontSize: sec ? '10px' : '11px', fontWeight: '700' },
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: sec ? 9 : 11, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   m.circle = new google.maps.Circle({ map: map, center: { lat: m.lat, lng: m.lng }, radius: m.geofence_radius_m,
-    fillColor: POI_COLOR, fillOpacity: .10, strokeColor: POI_COLOR, strokeOpacity: .5, strokeWeight: 1, clickable: false });
-  m.pulse = addPulse(m.lat, m.lng, POI_COLOR);
+    fillColor: color, fillOpacity: sec ? .06 : .10, strokeColor: color, strokeOpacity: sec ? .35 : .5, strokeWeight: 1, clickable: false });
+  m.pulse = addPulse(m.lat, m.lng, color);
+}
+/* Next marker number within a POI tier (1POI and 2POI are numbered separately). */
+function poiNumber(type) {
+  return marks.filter(function (x) { return x.kind === 'poi' && (x.poi_type || 'primary') === type; }).length + 1;
 }
 function checkpointVisual(m) {
-  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: 'checkpoint', zIndex: 4,
+  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: 'waypoint', zIndex: 4,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: CP_COLOR, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   m.pulse = addPulse(m.lat, m.lng, CP_COLOR);
 }
 
 /* ── Recording + marking ─────────────────────────────────── */
+var MARK_BTNS = ['cpBtn', 'poiBtn', 'poi2Btn'];
+
+/* Record ⇄ Stop. Stop finishes the walk (opens the save sheet); cancelling that
+ * sheet leaves the button on "Resume" to carry on the same walk. Marks can only
+ * be dropped while recording. */
+function onRecTap() {
+  if (recording) { openSave(); return; }
+  if (farOutside) { toast('Walk back to the tour area to record'); return; }
+  if (!$('projSel').value) { toast('Pick a project first'); openProjectPicker(); return; }
+  if (!editingRouteId && !tourName) { openNameSheet(); return; }
+  setRecording(true);
+}
+function syncRecBtn() {
+  $('recBtn').classList.toggle('on', recording);
+  $('recBtn').querySelector('span:last-child').textContent = recording ? 'Stop' : (started ? 'Resume' : 'Record');
+  $('recDot').hidden = !recording;
+  MARK_BTNS.forEach(function (id) { $(id).disabled = !recording; });
+}
 function setRecording(on) {
   // Guard: don't let recording START while far outside a loaded tour's area.
   if (on && !recording && farOutside) { toast('Walk back to the tour area to record'); return; }
   recording = on;
-  $('recBtn').classList.toggle('on', on);
-  $('recBtn').querySelector('span:last-child').textContent = on ? 'Pause' : (started ? 'Resume' : 'Record');
-  $('recDot').hidden = !on;
   if (on) {
     started = true;
     follow = true;
-    ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = false; });
     if (lastFix) { trackPath.push({ lat: lastFix.lat, lng: lastFix.lng }); trackPoly.setPath(trackPath); }
   }
-  saveDraft(true);   // capture the record/pause/resume transition
+  syncRecBtn();
+  saveDraft(true);   // capture the record/stop transition
+}
+
+/* ── New-tour name prompt ────────────────────────────────── */
+function openNameSheet() {
+  $('tName').value = tourName || '';
+  $('nameGo').disabled = !$('tName').value.trim();
+  show('nameSheet'); setTimeout(function () { $('tName').focus(); }, 50);
+}
+function submitName() {
+  var v = $('tName').value.trim();
+  if (!v) return;
+  tourName = v; syncTourLabel();
+  hide('nameSheet');
+  setRecording(true);
+}
+
+/* Tour picker label: "New tour", the new tour's name (tagged "new"), or the loaded tour. */
+function syncTourLabel() {
+  var editing = !!editingRouteId;
+  $('tourBtnLabel').textContent = editing ? ((loadedRoute && loadedRoute.name) || editingRouteId) : (tourName || 'New tour');
+  $('tourBtnTag').hidden = editing || !tourName;
 }
 
 function addCheckpoint() {
@@ -491,10 +539,13 @@ function addCheckpoint() {
   if (farOutside) return toast('Walk back to the tour area first');
   var m = { kind: 'checkpoint', lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
   checkpointVisual(m);
-  marks.push(m); afterMark('Checkpoint dropped');
+  marks.push(m); afterMark('Waypoint dropped');
 }
 
-function openPoi() {
+var pendingPoiType = 'primary';
+function openPoi(type) {
+  pendingPoiType = type === 'secondary' ? 'secondary' : 'primary';
+  $('poiTitle').textContent = pendingPoiType === 'secondary' ? 'Mark a secondary POI (2POI)' : 'Mark a primary POI (1POI)';
   if (!lastFix) return toast('Waiting for GPS fix…');
   if (farOutside) return toast('Walk back to the tour area first');
   pendingPoi = { lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
@@ -505,12 +556,11 @@ function openPoi() {
 function savePoi() {
   var name = $('poiName').value.trim();
   if (!name) return toast('POI needs a name');
-  var m = { kind: 'poi', lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
+  var m = { kind: 'poi', poi_type: pendingPoiType, lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
     name: name, category: $('poiCat').value.trim(), briefing_md: $('poiBrief').value.trim(),
     geofence_radius_m: Number($('poiRad').value) || 20 };
-  var n = marks.filter(function (x) { return x.kind === 'poi'; }).length + 1;
-  poiVisual(m, n);
-  marks.push(m); hide('poiSheet'); afterMark('POI “' + name + '” dropped');
+  poiVisual(m, poiNumber(pendingPoiType));
+  marks.push(m); hide('poiSheet'); afterMark((isSecondary(m) ? '2POI' : '1POI') + ' “' + name + '” dropped');
 }
 
 function undo() {
@@ -520,7 +570,7 @@ function undo() {
   if (m.marker) m.marker.setMap(null);
   if (m.circle) m.circle.setMap(null);
   removePulse(m.pulse);
-  afterMark('Removed ' + m.kind);
+  afterMark('Removed ' + (m.kind === 'checkpoint' ? 'waypoint' : (isSecondary(m) ? '2POI' : '1POI')));
 }
 function afterMark(msg) {
   updateCounts();
@@ -531,11 +581,12 @@ function afterMark(msg) {
 
 function updateCounts() {
   var cp = marks.filter(function (m) { return m.kind === 'checkpoint'; }).length;
-  var po = marks.filter(function (m) { return m.kind === 'poi'; }).length;
+  var p1 = marks.filter(function (m) { return m.kind === 'poi' && !isSecondary(m); }).length;
+  var p2 = marks.filter(function (m) { return m.kind === 'poi' && isSecondary(m); }).length;
   $('counts').innerHTML =
-    '<span class="c-cp">' + cp + ' checkpoint' + (cp === 1 ? '' : 's') + '</span>' +
-    ' · ' +
-    '<span class="c-poi">' + po + ' POI' + (po === 1 ? '' : 's') + '</span>';
+    '<span class="c-cp">' + cp + ' waypoint' + (cp === 1 ? '' : 's') + '</span>' +
+    ' · <span class="c-poi">' + p1 + ' 1POI</span>' +
+    ' · <span class="c-poi2">' + p2 + ' 2POI</span>';
 }
 function updateDist() {
   if (!google.maps.geometry || trackPath.length < 2) { $('dist').textContent = ''; return; }
@@ -566,8 +617,8 @@ function openSave() {
     var po = marks.filter(function (m) { return m.kind === 'poi'; }).length;
     var dist = (google.maps.geometry && trackPath.length > 1)
       ? Math.round(google.maps.geometry.spherical.computeLength(trackPath.map(function (c) { return new google.maps.LatLng(c.lat, c.lng); }))) : 0;
-    $('saveSummary').textContent = trackPath.length + ' GPS points · ' + cp + ' checkpoints · ' + po + ' POIs · ' + dist + ' m';
-    $('rName').value = '';
+    $('saveSummary').textContent = trackPath.length + ' GPS points · ' + cp + ' waypoints · ' + po + ' POIs · ' + dist + ' m';
+    $('rName').value = tourName;
   }
   show('saveSheet'); setTimeout(function () { $('rName').focus(); }, 50);
 }
@@ -596,7 +647,7 @@ function doSave() {
       poiMarks = poiMarks.slice().sort(function (a, b) { return alongDistance(merged, a) - alongDistance(merged, b); });
     }
     var pois = poiMarks.map(function (m) {
-      var o = { name: m.name, category: m.category, lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m, geofence_radius_m: m.geofence_radius_m, briefing_md: m.briefing_md };
+      var o = { name: m.name, category: m.category, poi_type: m.poi_type || 'primary', lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m, geofence_radius_m: m.geofence_radius_m, briefing_md: m.briefing_md };
       if (m.poi_id) o.poi_id = m.poi_id;   // keep existing POIs' identity on update
       return o;
     });
@@ -623,6 +674,7 @@ function doSave() {
     postJson(payload, editing ? 'route.update' : 'route.create')
       .then(function (res) {
         if (editing && res.content_version != null) loadedVersion = Number(res.content_version);
+        if (editing && loadedRoute) { loadedRoute.name = name; syncTourLabel(); }
         saveOpId = null; clearDraft();   // committed — this route is no longer an unsaved draft
         hide('saveSheet'); showResult(res.routeId || editingRouteId, editing);
       })
@@ -647,7 +699,7 @@ function buildTrack(snap, checkpoints, cb, errCb) {
     cb(track, trackPath.length > 1 ? len(trackPath) : '', trackPath);
     return;
   }
-  if (checkpoints.length < 2) { errCb('Need ≥2 checkpoints to snap a path.'); return; }
+  if (checkpoints.length < 2) { errCb('Need ≥2 waypoints to snap a path.'); return; }
   var wp = checkpoints.slice(0, 25);
   new google.maps.DirectionsService().route({
     origin: { lat: wp[0].lat, lng: wp[0].lng },
@@ -681,10 +733,10 @@ function resetRoute() {
   editingRouteId = null; loadedRoute = null; loadedVersion = null;
   existingPath = []; if (existingPoly) { existingPoly.setMap(null); existingPoly = null; }
   tourBox = null; clearLinkTemps();
-  setFar(false); $('editBanner').hidden = true;
-  $('recBtn').classList.remove('on'); $('recBtn').querySelector('span:last-child').textContent = 'Record'; $('recDot').hidden = true;
-  $('recBtn').disabled = false;
-  ['cpBtn', 'poiBtn', 'finBtn', 'undoBtn'].forEach(function (id) { $(id).disabled = true; });
+  tourName = ''; syncTourLabel();
+  setFar(false);
+  $('recBtn').disabled = false; syncRecBtn();
+  $('undoBtn').disabled = true;
   updateCounts(); $('dist').textContent = '';
 }
 
@@ -702,11 +754,12 @@ function maybeOfferRestore() {
   pendingDraft = d;
   var np = d.marks.filter(function (m) { return m.kind === 'poi' && !m.existing; }).length;
   var cp = d.marks.filter(function (m) { return m.kind === 'checkpoint' && !m.existing; }).length;
+  var tn = d.tourName || (d.loadedRoute && d.loadedRoute.name) || '';
   var pts = d.trackPath ? d.trackPath.length : 0;
   var proj = projName(d.projectId) || d.projectId || '';
   $('resumeSummary').textContent = pts + ' GPS point' + (pts === 1 ? '' : 's') + ' · ' +
-    np + ' POI' + (np === 1 ? '' : 's') + ' · ' + cp + ' checkpoint' + (cp === 1 ? '' : 's') +
-    (d.editingRouteId ? ' · extending a tour' : '') + (proj ? ' · ' + proj : '') +
+    np + ' POI' + (np === 1 ? '' : 's') + ' · ' + cp + ' waypoint' + (cp === 1 ? '' : 's') +
+    (tn ? ' · “' + tn + '”' : '') + (d.editingRouteId ? ' · editing' : '') + (proj ? ' · ' + proj : '') +
     (d.savedAt ? ' · ' + timeAgo(d.savedAt) : '');
   show('resumeSheet');
 }
@@ -718,6 +771,7 @@ function restoreDraft(d) {
     if (known) { sel.value = d.projectId; try { localStorage.setItem(PROJECT_KEY, d.projectId); } catch (e) {} syncProjLabel(); }
   }
   saveOpId = d.saveOpId || null;
+  tourName = d.tourName || '';
 
   if (d.editingRouteId) {
     editingRouteId = d.editingRouteId;
@@ -729,17 +783,16 @@ function restoreDraft(d) {
         strokeColor: '#6B7B73', strokeOpacity: .9, strokeWeight: 5,
         icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: .9, scale: 2.5 }, offset: '0', repeat: '14px' }] });
     }
-    $('editName').textContent = (loadedRoute && loadedRoute.name) || 'tour';
-    $('editBanner').hidden = false;
   }
+  syncTourLabel();
 
-  var poiN = 0;
   d.marks.forEach(function (md) {
     var m = { kind: md.kind, existing: !!md.existing, lat: Number(md.lat), lng: Number(md.lng),
       accuracy_m: md.accuracy_m, name: md.name || '', category: md.category || '',
       briefing_md: md.briefing_md || '', geofence_radius_m: Number(md.geofence_radius_m) || 20 };
     if (md.poi_id) m.poi_id = md.poi_id;
-    if (m.kind === 'poi') { poiN++; poiVisual(m, poiN); } else checkpointVisual(m);
+    if (m.kind === 'poi') { m.poi_type = md.poi_type === 'secondary' ? 'secondary' : 'primary'; poiVisual(m, poiNumber(m.poi_type)); }
+    else checkpointVisual(m);
     marks.push(m);
   });
 
@@ -748,11 +801,7 @@ function restoreDraft(d) {
   started = !!d.started; recording = false;
 
   $('hud').hidden = false;
-  var canPlace = !!editingRouteId || started;
-  ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = !canPlace; });
-  $('recBtn').classList.remove('on');
-  $('recBtn').querySelector('span:last-child').textContent = started ? 'Resume' : 'Record';
-  $('recBtn').disabled = false; $('recDot').hidden = true;
+  $('recBtn').disabled = false; syncRecBtn();
   $('undoBtn').disabled = !marks.some(function (m) { return !m.existing; });
 
   computeTourBox(); updateCounts(); updateDist();
@@ -769,7 +818,9 @@ function openTourPicker() {
   if (!AUTH || !AUTH.token) return showSignIn();
   var pid = $('projSel').value;
   if (!pid) return toast('Pick a project first');
-  var list = $('tourList'); list.innerHTML = '<p class="hint">Loading…</p>';
+  var list = $('tourList'); list.innerHTML = '';
+  list.appendChild(newTourItem());
+  list.insertAdjacentHTML('beforeend', '<p class="hint" id="tourLoading">Loading tours…</p>');
   show('tourSheet');
   fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
     .then(function (r) { return r.json(); })
@@ -777,20 +828,43 @@ function openTourPicker() {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not load tours');
       renderTourList(res.routes || []);
     })
-    .catch(function (e) { list.innerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+    .catch(function (e) { var l = $('tourLoading'); if (l) l.outerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+}
+
+/* Discarding unsaved work (or leaving a loaded tour) needs a confirm. */
+function okToLeaveTour() {
+  if (!hasUnsavedWork()) return true;
+  return confirm('Discard the unsaved recording on this tour?');
+}
+function newTourItem() {
+  var btn = document.createElement('button');
+  btn.className = 'tour-item new' + (!editingRouteId ? ' sel' : '');
+  btn.innerHTML = '<span class="tour-name"><i class="fa-solid fa-plus"></i>&nbsp; New tour</span>' +
+    '<span class="tour-meta">Record a fresh route</span>';
+  btn.addEventListener('click', function () {
+    hide('tourSheet');
+    if (!editingRouteId) return;              // already on a new tour — keep any work
+    if (!okToLeaveTour()) return;
+    resetRoute(); toast('New tour');
+  });
+  return btn;
 }
 
 function renderTourList(routes) {
   var list = $('tourList');
-  if (!routes.length) { list.innerHTML = '<p class="hint">No tours in this project yet — cancel and record a new one.</p>'; return; }
-  list.innerHTML = '';
+  var l = $('tourLoading'); if (l) l.remove();
+  if (!routes.length) { list.insertAdjacentHTML('beforeend', '<p class="hint">No saved tours in this project yet.</p>'); return; }
   routes.forEach(function (r) {
     var dm = Number(r.distance_m);
     var dist = (isNaN(dm) || !dm) ? '—' : (dm < 1000 ? Math.round(dm) + ' m' : (dm / 1000).toFixed(2) + ' km');
-    var btn = document.createElement('button'); btn.className = 'tour-item';
+    var btn = document.createElement('button'); btn.className = 'tour-item' + (r.route_id === editingRouteId ? ' sel' : '');
     btn.innerHTML = '<span class="tour-name">' + esc(r.name || r.route_id) + '</span>' +
       '<span class="tour-meta">' + esc(r.status || 'draft') + ' · ' + (r.poi_count || 0) + ' POI · ' + dist + '</span>';
-    btn.addEventListener('click', function () { loadTour(r.route_id); });
+    btn.addEventListener('click', function () {
+      if (r.route_id === editingRouteId) { hide('tourSheet'); return; }
+      if (!okToLeaveTour()) return;
+      loadTour(r.route_id);
+    });
     list.appendChild(btn);
   });
 }
@@ -798,6 +872,7 @@ function renderTourList(routes) {
 function loadTour(routeId) {
   var pid = $('projSel').value;
   var list = $('tourList'); list.innerHTML = '<p class="hint">Opening…</p>';
+  follow = false;
   fetch(backendUrl() + '?action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
     .then(function (r) { return r.json(); })
     .then(function (res) {
@@ -826,25 +901,24 @@ function hydrateTour(b) {
     strokeColor: '#6B7B73', strokeOpacity: .9, strokeWeight: 5,
     icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: .9, scale: 2.5 }, offset: '0', repeat: '14px' }] });
 
-  (b.pois || []).forEach(function (p, i) { addExistingPoi(p, i + 1); });
+  (b.pois || []).forEach(function (p) { addExistingPoi(p); });
   (b.waypoints || []).forEach(function (w) { addExistingCheckpoint(w); });
 
   computeTourBox();
-  $('editName').textContent = r.name || 'tour';
-  $('editBanner').hidden = false;
+  syncTourLabel();
   $('hud').hidden = false;
-  // In editing mode you can drop POIs/checkpoints where you stand, or record to extend.
-  ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = false; });
   $('undoBtn').disabled = true;
   updateCounts(); fitTour();
   if (lastFix) checkArea();
-  toast('Opened “' + (r.name || editingRouteId) + '” — drop a POI or record to extend');
+  toast('Opened “' + (r.name || editingRouteId) + '” — tap Record to add POIs or extend it');
 }
 
-function addExistingPoi(p, n) {
+function addExistingPoi(p) {
   var lat = Number(p.lat), lng = Number(p.lng);
   if (isNaN(lat) || isNaN(lng)) return;
-  var m = { kind: 'poi', existing: true, poi_id: p.poi_id, lat: lat, lng: lng, accuracy_m: num0(p.accuracy_m),
+  var type = String(p.poi_type || 'primary').toLowerCase() === 'secondary' ? 'secondary' : 'primary';
+  var n = poiNumber(type);
+  var m = { kind: 'poi', poi_type: type, existing: true, poi_id: p.poi_id, lat: lat, lng: lng, accuracy_m: num0(p.accuracy_m),
     name: p.name || ('POI ' + n), category: p.category || '', briefing_md: p.briefing_md || '',
     geofence_radius_m: Number(p.geofence_radius_m) || 20 };
   poiVisual(m, n);
@@ -890,12 +964,10 @@ function setFar(on) {
   $('farFlag').hidden = !on;
   if (on) {
     if (recording) setRecording(false);                 // stop logging junk while away
-    ['recBtn', 'cpBtn', 'poiBtn'].forEach(function (id) { $(id).disabled = true; });
+    ['recBtn'].concat(MARK_BTNS).forEach(function (id) { $(id).disabled = true; });
   } else {
     $('recBtn').disabled = false;
-    var canPlace = !!editingRouteId || started;
-    $('cpBtn').disabled = !canPlace;
-    $('poiBtn').disabled = !canPlace;
+    syncRecBtn();
   }
 }
 
@@ -959,7 +1031,8 @@ function buildEditedTrack(cb, errCb) {
   var encode = function (pts) { return google.maps.geometry.encoding.encodePath(pts.map(LL)); };
   var lenM = function (pts) { return pts.length > 1 ? Math.round(pathLen(pts)) : ''; };
 
-  if (trackPath.length < 2) {                 // no new walk → keep the loaded path
+  // No real new walk (e.g. Record → drop POIs → Stop on the spot) → keep the loaded path.
+  if (trackPath.length < 2 || pathLen(trackPath) < 15) {
     cb(existingPath.length ? encode(existingPath) : '', lenM(existingPath), existingPath);
     return;
   }
@@ -980,7 +1053,7 @@ function resolveJoins(pieces, done, fail) {
   (function next() {
     if (i >= joins.length) { done(connectors); return; }
     resolveOneJoin(joins[i], function (conn) {
-      if (conn === null) { fail('Walk the missing link, then tap Finish again.'); return; }
+      if (conn === null) { fail('Walk the missing link, then tap Stop again.'); return; }
       connectors[i] = conn; i++; next();
     });
   })();
@@ -1103,14 +1176,16 @@ function copyDiagnostics() {
 /* ── UI wiring ───────────────────────────────────────────── */
 function wireUi() {
   $('locSkip').addEventListener('click', hideLocating);
-  $('recBtn').addEventListener('click', function () { setRecording(!recording); });
+  $('recBtn').addEventListener('click', onRecTap);
   $('cpBtn').addEventListener('click', addCheckpoint);
-  $('poiBtn').addEventListener('click', openPoi);
+  $('poiBtn').addEventListener('click', function () { openPoi('primary'); });
+  $('poi2Btn').addEventListener('click', function () { openPoi('secondary'); });
   $('undoBtn').addEventListener('click', undo);
-  $('finBtn').addEventListener('click', openSave);
   $('profileBtn').addEventListener('click', toggleProfile);
-  $('openBtn').addEventListener('click', openTourPicker);
-  $('editExit').addEventListener('click', function () { resetRoute(); toast('Started a new route'); });
+  $('tourBtn').addEventListener('click', openTourPicker);
+  $('tName').addEventListener('input', function () { $('nameGo').disabled = !$('tName').value.trim(); });
+  $('tName').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitName(); });
+  $('nameGo').addEventListener('click', submitName);
   $('linkRerec').addEventListener('click', cancelLinkResolve);
   $('helpBtn').addEventListener('click', function () { show('helpScreen'); });
   $('helpClose').addEventListener('click', function () { hide('helpScreen'); });

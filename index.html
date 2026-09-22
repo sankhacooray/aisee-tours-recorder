@@ -16,22 +16,28 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link href="https://api.fontshare.com/v2/css?f[]=chillax@1&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<link rel="stylesheet" href="styles.css?v=20260922-115141" />
+<link rel="stylesheet" href="styles.css?v=20260922-120554" />
 </head>
 <body>
-  <!-- Top bar -->
+  <!-- Top bar — floating, two rows: project picker, then tour picker. -->
   <header class="bar">
-    <div class="title">Recorder</div>
-    <!-- Button opens a full-screen project picker; the hidden <select> still
-         holds the chosen value + the project list (the rest of the app reads it). -->
-    <button class="projbtn" id="projBtn" aria-label="Choose project" title="Choose project">
-      <span id="projBtnLabel">— project —</span><i class="fa-solid fa-chevron-down"></i>
-    </button>
-    <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
-    <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
-    <button class="iconbtn" id="openBtn" aria-label="Open existing tour" title="Open existing tour"><i class="fa-solid fa-folder-open"></i></button>
-    <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
-    <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
+    <div class="bar-row">
+      <!-- Button opens a full-screen project picker; the hidden <select> still
+           holds the chosen value + the project list (the rest of the app reads it). -->
+      <button class="pickbtn" id="projBtn" aria-label="Choose project" title="Choose project">
+        <i class="fa-solid fa-layer-group pb-ico"></i><span class="pb-label" id="projBtnLabel">— project —</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+      </button>
+      <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
+      <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
+      <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
+      <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
+    </div>
+    <div class="bar-row">
+      <!-- Tour picker — "New tour" by default; picking a saved tour opens it for editing. -->
+      <button class="pickbtn" id="tourBtn" aria-label="Choose tour" title="Choose tour">
+        <i class="fa-solid fa-route pb-ico"></i><span class="pb-label" id="tourBtnLabel">New tour</span><span class="pb-tag" id="tourBtnTag" hidden>new</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+      </button>
+    </div>
   </header>
 
   <!-- Profile balloon (anchored under the profile button) -->
@@ -61,12 +67,6 @@
   <!-- Top banner stack — editing banner + "too far" flag stack vertically with
        a gap, so neither overlaps regardless of how many lines each wraps to. -->
   <div class="topbanners" id="topBanners">
-    <!-- Editing banner — shown when extending an already-recorded tour -->
-    <div class="editbar" id="editBanner" hidden>
-      <i class="fa-solid fa-pen-to-square"></i>
-      <span class="editbar-txt">Extending <b id="editName">tour</b> — record to add to it</span>
-      <button class="editbar-x" id="editExit" title="Start a new route instead">New route</button>
-    </div>
 
     <!-- "Too far from the tour" guard flag -->
     <div class="farflag" id="farFlag" hidden>
@@ -78,23 +78,23 @@
   <!-- Live counters -->
   <div class="hud" id="hud" hidden>
     <span id="recDot" class="recdot" hidden></span>
-    <span id="counts">0 checkpoints · 0 POIs</span>
+    <span id="counts">0 waypoints · 0 1POI · 0 2POI</span>
     <span id="dist"></span>
   </div>
 
   <!-- Bottom action bar -->
   <nav class="actions">
     <button class="act rec" id="recBtn"><span class="ico"><i class="fa-solid fa-circle"></i></span><span>Record</span></button>
-    <button class="act" id="cpBtn" disabled><span class="ico"><i class="fa-solid fa-location-dot"></i></span><span>Checkpoint</span></button>
-    <button class="act" id="poiBtn" disabled><span class="ico"><i class="fa-solid fa-star"></i></span><span>POI</span></button>
+    <button class="act" id="cpBtn" disabled><span class="ico"><i class="fa-solid fa-location-dot"></i></span><span>Waypoint</span></button>
+    <button class="act poi1" id="poiBtn" disabled><span class="ico"><i class="fa-solid fa-star"></i></span><span>1POI</span></button>
+    <button class="act poi2" id="poi2Btn" disabled><span class="ico"><i class="fa-regular fa-star"></i></span><span>2POI</span></button>
     <button class="act undo" id="undoBtn" disabled><span class="ico"><i class="fa-solid fa-rotate-left"></i></span><span>Undo</span></button>
-    <button class="act fin" id="finBtn" disabled><span class="ico"><i class="fa-solid fa-check"></i></span><span>Finish</span></button>
   </nav>
 
   <!-- POI sheet -->
   <div class="sheet" id="poiSheet" hidden>
     <div class="card">
-      <h2>Mark a point of interest</h2>
+      <h2 id="poiTitle">Mark a primary POI (1POI)</h2>
       <p class="hint" id="poiCoord"></p>
       <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" /></label>
       <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" /></label>
@@ -119,9 +119,9 @@
   <!-- Tour picker — open an existing route to extend -->
   <div class="sheet" id="tourSheet" hidden>
     <div class="card">
-      <h2>Open a tour to extend</h2>
-      <p class="hint">Pick a recorded route. Your new walk and POIs are added on top of it — the
-        existing path is kept.</p>
+      <h2>Choose a tour</h2>
+      <p class="hint">Start a new tour, or pick a recorded one to edit — your new walk and POIs are
+        added on top of it and the existing path is kept.</p>
       <div class="tourlist" id="tourList"><p class="hint">Loading…</p></div>
       <div class="row"><button class="btn ghost" data-close="tourSheet">Cancel</button></div>
     </div>
@@ -138,6 +138,19 @@
     </div>
   </div>
 
+  <!-- Name a new tour — required before recording starts -->
+  <div class="sheet" id="nameSheet" hidden>
+    <div class="card">
+      <h2>Name this tour</h2>
+      <p class="hint">Give the new tour a name before you start recording. You can change it when saving.</p>
+      <label>Tour name *<input id="tName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" /></label>
+      <div class="row">
+        <button class="btn ghost" data-close="nameSheet">Cancel</button>
+        <button class="btn primary" id="nameGo" disabled>Start recording</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Save sheet -->
   <div class="sheet" id="saveSheet" hidden>
     <div class="card">
@@ -151,7 +164,7 @@
         <select id="rTracking"><option value="beacons" selected>beacons</option><option value="vslam">vslam</option><option value="hybrid">hybrid</option></select>
       </label>
       <label>Description<textarea id="rDesc" placeholder="Optional"></textarea></label>
-      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through checkpoints (Directions API) — use the raw GPS track if unsure</label>
+      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through waypoints (Directions API) — use the raw GPS track if unsure</label>
       <div class="row">
         <button class="btn ghost" data-close="saveSheet">Cancel</button>
         <button class="btn primary" id="saveGo">Save to backend</button>
@@ -170,24 +183,28 @@
       <p class="help-intro">Walk the route with your phone. The app draws your path on the map by
         itself — you just tap the buttons below to mark the important spots.</p>
       <div class="help-row">
+        <span class="help-btn"><i class="fa-solid fa-route"></i></span>
+        <div class="help-text"><b>Tour picker (top bar)</b><p>“New tour” records a fresh route. Pick a saved tour instead to edit it — add POIs or extend its path.</p></div>
+      </div>
+      <div class="help-row">
         <span class="help-btn rec"><i class="fa-solid fa-circle"></i></span>
-        <div class="help-text"><b>Record</b><p>Start walking your route. Tap again to pause, and once more to carry on.</p></div>
+        <div class="help-text"><b>Record / Stop</b><p>Start walking your route (a new tour asks for a name first). Tap <b>Stop</b> when you're done to save it.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-location-dot"></i></span>
-        <div class="help-text"><b>Checkpoint</b><p>Mark a spot the route must pass through — like a turn or a junction.</p></div>
+        <div class="help-text"><b>Waypoint</b><p>Mark a spot the route must pass through — like a turn or a junction.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-star"></i></span>
-        <div class="help-text"><b>POI</b><p>Mark a place worth stopping at and give it a name and a short note. This is what visitors will hear about.</p></div>
+        <div class="help-text"><b>1POI</b><p>A primary point of interest — a main stop. Give it a name and a short note; this is what visitors will hear about.</p></div>
+      </div>
+      <div class="help-row">
+        <span class="help-btn"><i class="fa-regular fa-star"></i></span>
+        <div class="help-text"><b>2POI</b><p>A secondary point of interest — something worth mentioning along the way, not a main stop.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-rotate-left"></i></span>
-        <div class="help-text"><b>Undo</b><p>Remove the last checkpoint or POI you added, in case of a mistake.</p></div>
-      </div>
-      <div class="help-row">
-        <span class="help-btn fin"><i class="fa-solid fa-check"></i></span>
-        <div class="help-text"><b>Finish</b><p>Stop and save the route when you're done walking.</p></div>
+        <div class="help-text"><b>Undo</b><p>Remove the last waypoint or POI you added, in case of a mistake.</p></div>
       </div>
     </div>
   </div>
@@ -264,6 +281,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="app.js?v=20260922-115141"></script>
+  <script src="app.js?v=20260922-120554"></script>
 </body>
 </html>

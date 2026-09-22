@@ -57,6 +57,37 @@ function logError(context, err, extra) {
 function getErrorLog() { try { return JSON.parse(localStorage.getItem(ERRLOG_KEY)) || []; } catch (e) { return []; } }
 function clearErrorLog() { try { localStorage.removeItem(ERRLOG_KEY); } catch (e) {} }
 
+/* GET a backend action and return the parsed JSON. Apps Script occasionally
+ * answers with a Google HTML error page instead of JSON (throttling / too many
+ * simultaneous runs / a transient server error) — that used to surface as
+ * "Unexpected token '<'". Read as text, retry HTML replies with backoff, and log
+ * the page title/status to Diagnostics so a persistent failure is explainable. */
+function getJson(query, context, tries) {
+  tries = tries == null ? 3 : tries;
+  var url = backendUrl() + '?' + query;
+  return fetch(url, { redirect: 'follow' })
+    .then(function (r) { return r.text().then(function (text) { return { status: r.status, text: text }; }); })
+    .then(function (resp) {
+      try { return JSON.parse(resp.text); }
+      catch (e) {
+        var t = (resp.text || '').match(/<title>([^<]*)<\/title>/i);
+        var snippet = t ? t[1].trim() : (resp.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+        var err = new Error('backend returned a Google error page (HTTP ' + resp.status + (snippet ? ': ' + snippet : '') + ')');
+        err.retryable = true;
+        throw err;
+      }
+    })
+    .catch(function (err) {
+      if (tries > 1) {
+        var wait = (4 - tries) * 1500 + 1000;          // 1s, then 2.5s
+        return new Promise(function (res) { setTimeout(res, wait); })
+          .then(function () { return getJson(query, context, tries - 1); });
+      }
+      logError(context || 'getJson', err, { action: (query.match(/action=([^&]*)/) || [])[1] });
+      throw err;
+    });
+}
+
 /* POST JSON to the backend and return the parsed reply. Reads the body as TEXT
  * first, then parses — so when the Apps Script 302-follow hands back an HTML
  * error/login page (or the fetch is cut short by iOS backgrounding the tab), we
@@ -232,8 +263,7 @@ function randomNonce() {
 
 /* Post-login: fetch identity + Maps key + projects, then start the map. */
 function bootstrap() {
-  fetch(backendUrl() + '?action=bootstrap&auth=' + encodeURIComponent(AUTH.token))
-    .then(function (r) { return r.json(); })
+  getJson('action=bootstrap&auth=' + encodeURIComponent(AUTH.token), 'bootstrap')
     .then(function (res) {
       if (!res || !res.ok) { clearSession(); showSignIn((res && res.error) || 'Session expired — please sign in again.'); return; }
       setProfile((res.user && (res.user.name || res.user.email)) || AUTH.name || AUTH.email,
@@ -250,7 +280,8 @@ function bootstrap() {
         initMap(); maybeOfferRestore();
       });
     })
-    .catch(function (e) { showMapMsg('Could not reach the backend: ' + e.message); });
+    .catch(function (e) { showMapMsg('Could not reach the backend — ' + esc(e.message) +
+      '<br><button class="btn primary" style="margin-top:14px" onclick="location.reload()">Retry</button>'); });
 }
 
 var projectsData = [];   // [{project_id, name, description}] — backs the picker
@@ -348,16 +379,28 @@ function createProject() {
     });
 }
 
+/* Tour counts: at most 2 requests in flight, so opening the picker doesn't fire
+ * one Apps Script run per project at once (the simultaneous-run limit). */
+var countQueue = [], countActive = 0;
+function pumpCounts() {
+  while (countActive < 2 && countQueue.length) {
+    countActive++;
+    countQueue.shift()(function () { countActive--; pumpCounts(); });
+  }
+}
 function loadProjectCount(pid, el, card) {
   var set = function (txt) { el.className = 'pc-count'; el.textContent = txt; card.classList.remove('loading-wave'); };
   if (!AUTH || !AUTH.token) { set('— tours'); return; }
-  fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+  countQueue.push(function (next) {
+  getJson('action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'projectCount')
     .then(function (res) {
       var n = (res && res.ok) ? (typeof res.count === 'number' ? res.count : (res.routes ? res.routes.length : null)) : null;
       set((n == null ? '—' : n) + ' tour' + (n === 1 ? '' : 's'));
     })
-    .catch(function () { set('— tours'); });
+    .catch(function () { set('— tours'); })
+    .then(next);
+  });
+  pumpCounts();
 }
 function selectProject(pid) {
   if (pid !== $('projSel').value && (editingRouteId || hasUnsavedWork())) {
@@ -881,8 +924,7 @@ function openTourPicker() {
   for (var k = 0; k < 3; k++) skel += '<div class="tour-item loading-wave tour-skel"><span class="skel w60"></span><span class="skel w40"></span></div>';
   list.insertAdjacentHTML('beforeend', skel);
   show('tourScreen');
-  fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+  getJson('action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'tourList')
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not load tours');
       renderTourList(res.routes || []);
@@ -940,8 +982,7 @@ function loadTour(routeId, btn) {
   var done = function () { list.classList.remove('busy'); if (btn) btn.classList.remove('loading-wave'); };
   var old = list.querySelector('.msg.err'); if (old) old.remove();
   follow = false;
-  fetch(backendUrl() + '?action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+  getJson('action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'loadTour')
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not open tour');
       done(); hydrateTour(res); hide('tourScreen');

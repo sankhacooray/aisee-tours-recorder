@@ -13,8 +13,21 @@
   --display: "Chillax", "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --bar-h: 52px;
   --act-h: 76px;
+  --gap: 8px;                                         /* floating-chrome margin */
+  --fbar-row: 40px;                                   /* one row of the floating bar */
+  --fbar-h: calc(var(--fbar-row) * 2 + 6px + 16px);   /* 2 rows + row gap + padding */
+  --bar-bottom: calc(env(safe-area-inset-top) + var(--gap) + var(--fbar-h)); /* bar's lower edge */
+  /* Frosted glass: a heavy blur + a fairly dense tint, so the map behind is
+     diffused into soft colour rather than showing through legibly. */
+  --glass-dark: rgba(27,67,50,.80);
+  --glass-light: rgba(255,255,255,.70);
+  --glass-blur: blur(28px) saturate(1.8);
+  --glass-edge: inset 0 1px 0 rgba(255,255,255,.35);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* `hidden` must always win — e.g. the global `select { display:block }` below
+   would otherwise show the hidden project <select> next to its picker button. */
+[hidden] { display: none !important; }
 html, body {
   margin: 0; height: 100%; overflow: hidden;
   font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -23,11 +36,15 @@ html, body {
 body { display: flex; flex-direction: column; }
 
 /* Top bar */
+/* Floating, rounded, frosted-glass app bar over the map. */
 .bar {
-  height: calc(var(--bar-h) + env(safe-area-inset-top));
-  padding-top: env(safe-area-inset-top);
-  display: flex; align-items: center; gap: 6px; padding-left: 14px; padding-right: 10px;
-  background: var(--purple-deep); color: #fff; flex: 0 0 auto; z-index: 10;
+  position: absolute; z-index: 30;
+  top: calc(env(safe-area-inset-top) + var(--gap)); left: var(--gap); right: var(--gap);
+  display: flex; align-items: stretch; gap: 6px; padding: 8px;
+  background: var(--glass-dark); color: #fff; border-radius: 16px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255,255,255,.18);
+  box-shadow: var(--glass-edge), 0 6px 22px rgba(0,0,0,.20);
 }
 .title { flex: 0 0 auto; font-weight: 700; font-size: 16px; font-family: var(--display); letter-spacing: -0.01em; }
 .sheet h2 { font-family: var(--display); letter-spacing: -0.01em; }
@@ -39,6 +56,35 @@ body { display: flex; flex-direction: column; }
   background-repeat: no-repeat; background-position: right 9px center; background-size: 10px 6px;
 }
 .projsel option { color: #000; }
+
+.bar-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.bar-row { display: flex; align-items: center; gap: 4px; height: var(--fbar-row); min-width: 0; }
+/* Same fixed width on both rows, so the project + tour pickers line up. */
+.bar-tail { flex: 0 0 34px; display: flex; align-items: center; justify-content: center; }
+.bar .applaunch { align-self: center; padding: 0 2px 0 8px; border-left: 1px solid rgba(255,255,255,.16); }
+
+/* Wide project / tour pickers in the floating bar — the only flexible items, so a
+   long name ellipsizes instead of pushing the icons off-screen. */
+.pickbtn {
+  flex: 1 1 auto; min-width: 0; height: 100%;
+  display: flex; align-items: center; gap: 9px; cursor: pointer; text-align: left;
+  font-family: inherit; font-size: 14px; font-weight: 600; color: #fff;
+  background-color: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22);
+  border-radius: 11px; padding: 0 12px;
+}
+.pickbtn:active { background-color: rgba(255,255,255,.24); }
+.pb-ico { flex: 0 0 auto; font-size: 13px; opacity: .8; width: 15px; text-align: center; }
+.pb-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-tag {
+  flex: 0 0 auto; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  background: rgba(255,255,255,.9); color: var(--purple-deep); border-radius: 999px; padding: 2px 7px;
+}
+.pb-tag[hidden] { display: none; }
+.pb-chev { flex: 0 0 auto; margin-left: auto; font-size: 11px; opacity: .85; }
+/* Startup skeleton: pickers show a wave + "Loading…" until bootstrap completes. */
+.pickbtn.pb-loading { cursor: default; color: rgba(255,255,255,.72); font-weight: 500; }
+.pickbtn.pb-loading .pb-ico, .pickbtn.pb-loading .pb-chev, .pickbtn.pb-loading .pb-tag { display: none; }
+.pickbtn.loading-wave::after { background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.22) 50%, transparent 80%); }
 
 /* Project chip in the top bar — opens the full-screen picker. */
 .projbtn {
@@ -53,27 +99,91 @@ body { display: flex; flex-direction: column; }
 .projbtn #projBtnLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projbtn i { font-size: 10px; opacity: .85; flex: 0 0 auto; }
 
-/* Full-screen project picker */
-.projscreen { position: fixed; inset: 0; z-index: 150; background: var(--bg); display: flex; flex-direction: column; }
-.projscreen[hidden] { display: none; }
-.proj-bar {
-  height: calc(var(--bar-h) + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top);
-  display: flex; align-items: center; gap: 12px; padding-left: 18px; padding-right: 12px;
-  background: var(--purple-deep); color: #fff; flex: 0 0 auto;
+/* Full-screen pickers (project / tour) — frosted veil over the map; the header
+   floats exactly where the app bar is (same margins + height) and stays put,
+   while the list panel below scrolls. */
+.pickscreen {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(20,32,26,.28);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
 }
-.proj-title { font-family: var(--display); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
-.proj-bar .iconbtn { margin-left: auto; }
-.proj-body {
-  flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 620px; margin: 0 auto;
-  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
-  display: grid; gap: 10px; grid-template-columns: 1fr; align-content: start;
+.pick-head {
+  position: absolute; top: calc(env(safe-area-inset-top) + var(--gap)); left: var(--gap); right: var(--gap);
+  height: var(--fbar-h); display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px;
+  background: var(--glass-dark); color: #fff; border-radius: 16px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border: 1px solid rgba(255,255,255,.18); box-shadow: 0 6px 22px rgba(0,0,0,.18);
 }
+/* Launcher-style "AiSee Tours" app shortcut in the project picker header. */
+.applaunch {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: 0; padding: 2px 4px; cursor: pointer; color: #fff; font-family: inherit;
+}
+.al-icon {
+  width: 46px; height: 46px; border-radius: 13px; overflow: hidden; display: block;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25); background: rgba(38,34,56,.5);
+}
+.al-icon img { width: 100%; height: 100%; display: block; opacity: .72; }
+.applaunch:active .al-icon img { opacity: 1; }
+.al-name { font-size: 10.5px; font-weight: 600; opacity: .9; white-space: nowrap; }
+.pick-htext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pick-title { font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+.pick-sub { font-size: 12.5px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-body {
+  position: absolute; top: calc(var(--bar-bottom) + var(--gap)); left: var(--gap); right: var(--gap);
+  bottom: calc(env(safe-area-inset-bottom) + var(--gap));
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding: 10px; border-radius: 16px;
+  background: rgba(255,255,255,.40); border: 1px solid rgba(255,255,255,.5);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: 0 6px 22px rgba(0,0,0,.14);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.pick-body .hint, .pick-body .msg { margin: 6px 4px; }
+/* Form variant (new project / name tour): panel hugs its content instead of
+   stretching to the bottom, so the keyboard gets the empty lower half. */
+.formscreen { z-index: 200; }                       /* above the pickers it opens from */
+.form-body { bottom: auto; max-height: calc(100% - var(--bar-bottom) - 2 * var(--gap)); padding: 14px 14px 10px; gap: 0; }
+.form-body label { color: var(--ink); }
+.form-body input, .form-body textarea { background: rgba(255,255,255,.85); }
+.form-body textarea { min-height: 64px; }
+.form-body .row { margin-top: 2px; }
+.form-body .msg:empty { display: none; }
+.form-body label.check { color: var(--ink-70); font-weight: 500; font-size: 12.5px; }
+.fieldlabel { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+
+/* Segmented option buttons on one line (radius presets, status). */
+.segs { display: flex; gap: 6px; margin-bottom: 12px; }
+.seg {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 8px 4px; border-radius: 11px; cursor: pointer; font-family: inherit; color: var(--ink);
+  background: rgba(255,255,255,.85); border: 1.5px solid rgba(26,31,28,.10);
+}
+.seg b { font-size: 13.5px; font-weight: 700; }
+.seg span { font-size: 10.5px; color: var(--ink-70); }
+.seg.on { background: var(--purple-deep); border-color: var(--purple-deep); color: #fff; }
+.seg.on span { color: rgba(255,255,255,.8); }
+.seg:disabled { opacity: .55; }
+.formscreen.busy .form-body label, .formscreen.busy .btn.ghost, .formscreen.busy [data-close] { opacity: .5; }
+.formscreen.busy .pick-head [data-close] { pointer-events: none; }
+
+/* Loading "wave" — a light sheen sweeping across a card while its data loads. */
+.loading-wave { position: relative; overflow: hidden; }
+.loading-wave::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.75) 50%, transparent 80%);
+  transform: translateX(-100%); animation: wave 1.3s ease-in-out infinite;
+}
+@keyframes wave { to { transform: translateX(100%); } }
+.skel { display: block; height: 12px; border-radius: 6px; background: rgba(26,31,28,.10); }
+.skel.w40 { width: 40%; } .skel.w60 { width: 60%; } .skel.w25 { width: 25%; height: 20px; border-radius: 999px; }
+
 .proj-card {
-  position: relative; text-align: left; background: var(--card, #fff); border: 1.5px solid var(--line);
+  position: relative; text-align: left; background: rgba(255,255,255,.78); border: 1.5px solid rgba(255,255,255,.7);
   border-radius: 16px; padding: 15px 15px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 6px;
-  transition: border-color .12s, box-shadow .12s, transform .05s;
+  transition: border-color .12s, box-shadow .12s;
 }
-.proj-card:active { transform: translateY(1px); }
+.proj-card:active { background: #fff; }
 .proj-card.sel { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(45,106,79,.14); }
 .proj-card .pc-name { font-family: var(--display); font-weight: 700; font-size: 16px; color: var(--ink); line-height: 1.2; }
 .proj-card .pc-desc { font-size: 12.5px; color: var(--ink-70); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -81,8 +191,21 @@ body { display: flex; flex-direction: column; }
   margin-top: 2px; align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--purple);
   background: var(--chip, #eef3f0); border-radius: 999px; padding: 3px 10px;
 }
+.proj-card.new { border-style: dashed; border-color: rgba(45,106,79,.45); flex-direction: row; align-items: center; gap: 12px; }
+.proj-card.new .pc-plus {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--purple); color: #fff; font-size: 15px;
+}
+.proj-card.new .pc-name { color: var(--purple-deep); }
 .proj-card .pc-tick { position: absolute; top: 12px; right: 13px; color: var(--purple); font-size: 16px; }
-.gps { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 5px; font-size: 12px; font-family: var(--mono); opacity: .95; }
+/* GPS accuracy chip — sits beside the counters, same pill look + height. */
+.gps {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; font-family: var(--mono); color: var(--ink);
+  background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  line-height: 1.35;
+}
 .gps .dot { width: 9px; height: 9px; border-radius: 50%; background: #c0392b; box-shadow: 0 0 0 0 rgba(255,255,255,.4); }
 .gps .dot.ok { background: #2ecc71; }
 .gps .dot.mid { background: #f1c40f; }
@@ -94,15 +217,15 @@ body { display: flex; flex-direction: column; }
 
 /* Profile balloon popover (anchored under the profile button) */
 .popover {
-  position: absolute; right: 8px; z-index: 50;
-  top: calc(var(--bar-h) + env(safe-area-inset-top) + 6px);
-  width: 250px; max-width: calc(100vw - 16px); background: #fff;
+  position: absolute; left: var(--gap); right: var(--gap); z-index: 50;
+  top: calc(var(--bar-bottom) + 8px);
+  background: #fff;
   border: 1px solid var(--line); border-radius: 14px; padding: 14px;
   box-shadow: 0 10px 34px rgba(0,0,0,.20);
 }
 .popover[hidden] { display: none; }
 .popover::before {
-  content: ""; position: absolute; top: -6px; right: 15px; width: 12px; height: 12px;
+  content: ""; position: absolute; top: -6px; left: var(--arrow-x, calc(100% - 30px)); width: 12px; height: 12px;
   background: #fff; border-left: 1px solid var(--line); border-top: 1px solid var(--line);
   transform: rotate(45deg);
 }
@@ -119,6 +242,30 @@ body { display: flex; flex-direction: column; }
 
 /* Map */
 #map { flex: 1 1 auto; width: 100%; background: #e9e9ef; }
+
+/* Locating overlay — frosted veil over the map until the first GPS fix. */
+.locating {
+  position: absolute; inset: 0; z-index: 20;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(233,236,234,.55);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+  opacity: 1; transition: opacity .35s ease;
+}
+.locating.out { opacity: 0; pointer-events: none; }
+.loc-card { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; max-width: 300px; }
+.loc-pulse {
+  position: relative; width: 64px; height: 64px; border-radius: 50%; margin-bottom: 6px;
+  display: grid; place-items: center; color: #fff; font-size: 26px; background: #1769ff;
+  box-shadow: 0 6px 20px rgba(23,105,255,.35);
+}
+.loc-pulse::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #1769ff;
+  animation: locRing 1.6s ease-out infinite;
+}
+@keyframes locRing { from { transform: scale(1); opacity: .7; } to { transform: scale(2.1); opacity: 0; } }
+.loc-title { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+.loc-sub { font-size: 13.5px; color: var(--ink-70); }
+.locating .btn { margin-top: 8px; }
 .map-msg { display: grid; place-items: center; height: 100%; padding: 24px; text-align: center; color: var(--ink-70); font-size: 14px; }
 .map-msg code { font-family: var(--mono); background: #fff; padding: 2px 6px; border-radius: 4px; }
 
@@ -126,7 +273,7 @@ body { display: flex; flex-direction: column; }
    gap so they never overlap no matter how many lines each wraps to. */
 .topbanners {
   position: absolute; left: 8px; right: 8px;
-  top: calc(var(--bar-h) + env(safe-area-inset-top) + 8px);
+  top: calc(var(--bar-bottom) + 8px);
   z-index: 9; display: flex; flex-direction: column; gap: 8px;
   pointer-events: none;                 /* let map drags pass through the gaps */
 }
@@ -159,13 +306,16 @@ body { display: flex; flex-direction: column; }
 .farflag i { font-size: 16px; flex: 0 0 auto; }
 
 /* Tour picker list */
-.tourlist { max-height: 48vh; overflow-y: auto; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; }
 .tour-item {
   display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
-  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
-  font-family: inherit; cursor: pointer;
+  background: rgba(255,255,255,.78); border: 1.5px solid rgba(255,255,255,.7); border-radius: 14px; padding: 13px 15px;
+  font-family: inherit; cursor: pointer; flex: 0 0 auto;
 }
 .tour-item:active { background: var(--bg); }
+.tour-item.sel { border-color: var(--purple); box-shadow: inset 0 0 0 1px var(--purple); }
+.tour-item.new .tour-name { color: var(--purple-deep); }
+.tour-skel { gap: 8px; cursor: default; }
+#tourList.busy .tour-item:not(.loading-wave) { opacity: .55; pointer-events: none; }
 .tour-name { font-weight: 700; font-size: 15px; color: var(--ink); font-family: var(--display); }
 .tour-meta { font-size: 12.5px; color: var(--ink-70); }
 
@@ -182,17 +332,47 @@ body { display: flex; flex-direction: column; }
 
 /* HUD counters — sits just above the bottom action bar so it never collides
    with the top bar / editing banner. */
-.hud {
-  position: absolute; left: 50%; transform: translateX(-50%);
+.hudrow {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 9;
   bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 28px);
+  display: flex; align-items: stretch; gap: 6px; width: max-content; max-width: calc(100% - 16px);
+}
+.hud {
   background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6); border-radius: 999px;
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   padding: 7px 15px; font-size: 12.5px; font-weight: 600; color: var(--ink);
   display: flex; align-items: center; gap: 10px; z-index: 9; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  white-space: nowrap;   /* one line — the .hudrow sizes to fit */
 }
+/* Re-centre / follow-me button — bottom-right, above the chip row. */
+.recenter {
+  position: absolute; right: 12px; z-index: 9;
+  bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 76px);
+  width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,.92); border: 1px solid rgba(255,255,255,.6); color: #1769ff; font-size: 20px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(0,0,0,.18);
+}
+.recenter:active { background: #fff; }
+
+/* Weak-GPS notice — sits above the counters, semi-transparent frosted pill. */
+.gpswait {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 9;
+  bottom: calc(var(--act-h) + env(safe-area-inset-bottom) + 70px);
+  width: max-content; max-width: calc(100% - 136px);   /* clear of the re-centre button */
+  display: flex; align-items: center; gap: 11px; padding: 10px 14px;
+  background: rgba(26,31,28,.62); color: #fff; border-radius: 14px;
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 4px 16px rgba(0,0,0,.16); pointer-events: none;
+  font-size: 12.5px; line-height: 1.35;
+}
+.gpswait i { font-size: 18px; color: #f1c40f; animation: pulse 1.6s infinite; flex: 0 0 auto; }
+.gpswait b { display: block; font-size: 13.5px; }
+.gpswait span { opacity: .88; }
+
 /* Colour-coded counters: checkpoints blue, POIs red — match the map markers. */
 #counts .c-cp { color: #1971C2; font-weight: 700; }
 #counts .c-poi { color: #D7263D; font-weight: 700; }
+#counts .c-poi2 { color: #E8590C; font-weight: 700; }
 .hud .recdot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 #dist { color: var(--ink-70); font-weight: 500; }
@@ -202,26 +382,29 @@ body { display: flex; flex-direction: column; }
 .actions {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; gap: 6px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
-  background: rgba(255,255,255,.55);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6);
-  border-top: 1px solid rgba(255,255,255,.55); z-index: 10;
+  z-index: 10; pointer-events: none;   /* the map stays draggable between buttons */
 }
 .act {
   /* Equal-width columns: flex-basis 0 + grow 1 means every button gets exactly
      1/5 of the row regardless of its label length. min-width:0 lets long labels
      ("Checkpoint") ellipsis/shrink instead of stretching their column. */
-  flex: 1 1 0; min-width: 0; height: var(--act-h); border: 1px solid rgba(255,255,255,.6); background: rgba(255,255,255,.62); border-radius: 14px;
+  flex: 1 1 0; min-width: 0; height: var(--act-h); border-radius: 16px; pointer-events: auto;
+  background: var(--glass-light); border: 1px solid rgba(255,255,255,.55);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge), 0 4px 16px rgba(0,0,0,.14);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   font-family: inherit; font-size: 11.5px; font-weight: 600; color: var(--ink); cursor: pointer; padding: 4px;
 }
 .act .ico { font-size: 22px; line-height: 1; }
 .act > span:not(.ico) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.act:disabled { opacity: .4; }
-.act.rec { background: var(--red); border-color: var(--red); color: #fff; }
-.act.rec.on { background: var(--ink); border-color: var(--ink); }
+.act:disabled { color: rgba(26,31,28,.38); }   /* keep the glass; dim only the content */
+.act.rec { background: rgba(215,38,61,.86); border-color: rgba(255,255,255,.3); color: #fff; }
+.act.rec.on { background: rgba(26,31,28,.84); border-color: rgba(255,255,255,.25); }
+.act.poi1:not(:disabled) .ico { color: #D7263D; }
+.act.poi2:not(:disabled) .ico { color: #E8590C; }
 .act.rec.on .ico .fa-solid::before { content: "\f04d"; } /* fa-stop while recording */
-.act.fin { background: var(--green); border-color: var(--green); color: #fff; }
-.act.fin:disabled { background: #fff; color: var(--ink); border-color: var(--line); }
+.act.fin { background: rgba(27,67,50,.72); border-color: rgba(255,255,255,.3); color: #fff; }
+.act.fin:disabled { background: var(--glass-light); color: rgba(26,31,28,.38); border-color: rgba(255,255,255,.55); }
 
 /* Sheets (bottom modals) */
 .sheet { position: fixed; inset: 0; background: rgba(38,34,56,.45); display: flex; align-items: flex-end; justify-content: center; z-index: 100; }

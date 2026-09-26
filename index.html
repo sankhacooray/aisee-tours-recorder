@@ -4,10 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1" />
 <meta name="theme-color" content="#5E519A" />
-<title>Tours Route Recorder</title>
+<title>AiSee Recorder</title>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icon.svg" type="image/svg+xml" />
-<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-title" content="AiSee Recorder" />
+<meta name="application-name" content="AiSee Recorder" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,19 +21,36 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Top bar -->
+  <!-- Top bar — floating, two rows: project picker, then tour picker. -->
   <header class="bar">
-    <div class="title">Recorder</div>
-    <!-- Button opens a full-screen project picker; the hidden <select> still
-         holds the chosen value + the project list (the rest of the app reads it). -->
-    <button class="projbtn" id="projBtn" aria-label="Choose project" title="Choose project">
-      <span id="projBtnLabel">— project —</span><i class="fa-solid fa-chevron-down"></i>
+    <div class="bar-main">
+      <div class="bar-row">
+        <!-- Button opens a full-screen project picker; the hidden <select> still
+             holds the chosen value + the project list (the rest of the app reads it). -->
+        <button class="pickbtn pb-loading loading-wave" id="projBtn" aria-label="Choose project" title="Choose project" disabled>
+          <i class="fa-solid fa-layer-group pb-ico"></i><span class="pb-label" id="projBtnLabel">Loading projects…</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+        </button>
+        <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
+        <div class="bar-tail">
+          <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
+        </div>
+      </div>
+      <div class="bar-row">
+        <!-- Tour picker — "New tour" by default; picking a saved tour opens it for editing. -->
+        <button class="pickbtn pb-loading loading-wave" id="tourBtn" aria-label="Choose tour" title="Choose tour" disabled>
+          <i class="fa-solid fa-route pb-ico"></i><span class="pb-label" id="tourBtnLabel">Loading tours…</span><span class="pb-tag" id="tourBtnTag" hidden>new</span><i class="fa-solid fa-chevron-down pb-chev"></i>
+        </button>
+        <div class="bar-tail">
+          <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
+        </div>
+      </div>
+    </div>
+    <!-- Launcher-style shortcut into the installed AiSee Tours app (Android / iOS),
+         spanning both rows on the right. -->
+    <button class="applaunch" id="openToursApp" aria-label="Open AiSee Tours app" title="Open AiSee Tours app" hidden>
+      <span class="al-icon"><img src="icon-192.png" alt="" width="44" height="44" /></span>
+      <span class="al-name">AiSee Tours</span>
     </button>
-    <select class="projsel" id="projSel" aria-label="Project" hidden><option value="">— project —</option></select>
-    <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
-    <button class="iconbtn" id="openBtn" aria-label="Open existing tour" title="Open existing tour"><i class="fa-solid fa-folder-open"></i></button>
-    <button class="iconbtn" id="helpBtn" aria-label="How it works" title="How it works"><i class="fa-solid fa-circle-question"></i></button>
-    <button class="iconbtn" id="profileBtn" aria-label="Account" title="Account"><i class="fa-solid fa-circle-user"></i></button>
   </header>
 
   <!-- Profile balloon (anchored under the profile button) -->
@@ -47,15 +66,20 @@
   <!-- Map -->
   <div id="map"></div>
 
+  <!-- Locating overlay — covers the map until the first GPS fix, so the map
+       never flashes the default spot and then jumps to where you are. -->
+  <div class="locating" id="locating" hidden>
+    <div class="loc-card">
+      <span class="loc-pulse"><i class="fa-solid fa-location-crosshairs"></i></span>
+      <div class="loc-title" id="locTitle">Finding your location…</div>
+      <div class="loc-sub" id="locSub">Getting a GPS fix</div>
+      <button class="btn ghost" id="locSkip" hidden>Show map anyway</button>
+    </div>
+  </div>
+
   <!-- Top banner stack — editing banner + "too far" flag stack vertically with
        a gap, so neither overlaps regardless of how many lines each wraps to. -->
   <div class="topbanners" id="topBanners">
-    <!-- Editing banner — shown when extending an already-recorded tour -->
-    <div class="editbar" id="editBanner" hidden>
-      <i class="fa-solid fa-pen-to-square"></i>
-      <span class="editbar-txt">Extending <b id="editName">tour</b> — record to add to it</span>
-      <button class="editbar-x" id="editExit" title="Start a new route instead">New route</button>
-    </div>
 
     <!-- "Too far from the tour" guard flag -->
     <div class="farflag" id="farFlag" hidden>
@@ -64,31 +88,58 @@
     </div>
   </div>
 
-  <!-- Live counters -->
-  <div class="hud" id="hud" hidden>
+  <!-- Weak-GPS notice — Record stays disabled until accuracy is yellow/green -->
+  <div class="gpswait" id="gpsWait" hidden>
+    <i class="fa-solid fa-satellite-dish"></i>
+    <div><b>Waiting for a stronger GPS signal</b>
+      <span>Recording unlocks at ±30 m or better (<span id="gpsWaitAcc">no GPS fix yet</span>). Open sky helps.</span></div>
+  </div>
+
+  <!-- Re-centre (follow me) — shown after the map is dragged away from you -->
+  <button class="recenter" id="recenterBtn" aria-label="Follow my location" title="Follow my location" hidden>
+    <i class="fa-solid fa-location-crosshairs"></i>
+  </button>
+
+  <!-- Bottom chip row: GPS accuracy chip + live counters, centred above the actions -->
+  <div class="hudrow">
+    <div class="gps" id="gps"><span class="dot" id="gpsDot"></span><span id="gpsText">no fix</span></div>
+    <!-- Live counters -->
+    <div class="hud" id="hud" hidden>
     <span id="recDot" class="recdot" hidden></span>
-    <span id="counts">0 checkpoints · 0 POIs</span>
+    <span id="counts">0 waypoints · 0 1POI · 0 2POI</span>
     <span id="dist"></span>
+  </div>
   </div>
 
   <!-- Bottom action bar -->
   <nav class="actions">
     <button class="act rec" id="recBtn"><span class="ico"><i class="fa-solid fa-circle"></i></span><span>Record</span></button>
-    <button class="act" id="cpBtn" disabled><span class="ico"><i class="fa-solid fa-location-dot"></i></span><span>Checkpoint</span></button>
-    <button class="act" id="poiBtn" disabled><span class="ico"><i class="fa-solid fa-star"></i></span><span>POI</span></button>
+    <button class="act" id="cpBtn" disabled><span class="ico"><i class="fa-solid fa-location-dot"></i></span><span>Waypoint</span></button>
+    <button class="act poi1" id="poiBtn" disabled><span class="ico"><i class="fa-solid fa-star"></i></span><span>1POI</span></button>
+    <button class="act poi2" id="poi2Btn" disabled><span class="ico"><i class="fa-regular fa-star"></i></span><span>2POI</span></button>
     <button class="act undo" id="undoBtn" disabled><span class="ico"><i class="fa-solid fa-rotate-left"></i></span><span>Undo</span></button>
-    <button class="act fin" id="finBtn" disabled><span class="ico"><i class="fa-solid fa-check"></i></span><span>Finish</span></button>
   </nav>
 
-  <!-- POI sheet -->
-  <div class="sheet" id="poiSheet" hidden>
-    <div class="card">
-      <h2>Mark a point of interest</h2>
-      <p class="hint" id="poiCoord"></p>
-      <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" /></label>
-      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" /></label>
-      <label>Briefing<textarea id="poiBrief" placeholder="What the visitor hears here…"></textarea></label>
-      <label>Geofence radius (m)<input id="poiRad" type="number" min="1" value="20" /></label>
+  <!-- POI form — full-screen frosted layout, form up top, keyboard gets the bottom -->
+  <div class="pickscreen formscreen" id="poiSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title" id="poiTitle">Mark a primary POI (1POI)</span>
+        <span class="pick-sub" id="poiCoord"></span>
+      </div>
+      <button class="iconbtn" data-close="poiSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Name *<input id="poiName" type="text" placeholder="e.g. Saman (Rain Tree)" autocomplete="off" enterkeyhint="next" /></label>
+      <label>Category<input id="poiCat" type="text" placeholder="e.g. heritage-tree" autocomplete="off" enterkeyhint="done" /></label>
+      <div class="fieldlabel">Geofence radius</div>
+      <!-- Same presets as the dashboard's POI editor (15 / 20 / 25 / 35 m) -->
+      <div class="segs" id="poiRadSegs">
+        <button type="button" class="seg" data-v="15"><b>15 m</b><span>tight</span></button>
+        <button type="button" class="seg" data-v="20"><b>20 m</b><span>snug</span></button>
+        <button type="button" class="seg on" data-v="25"><b>25 m</b><span>default</span></button>
+        <button type="button" class="seg" data-v="35"><b>35 m</b><span>wide</span></button>
+      </div>
       <div class="row">
         <button class="btn ghost" data-close="poiSheet">Cancel</button>
         <button class="btn primary" id="poiSave">Drop POI</button>
@@ -96,24 +147,29 @@
     </div>
   </div>
 
-  <!-- Project picker — full-screen, replaces the native <select> dropdown -->
-  <div class="projscreen" id="projScreen" hidden>
-    <header class="proj-bar">
-      <span class="proj-title">Choose a project</span>
+  <!-- Project picker — full-screen frosted overlay; header sits exactly where the
+       app bar is (fixed), the card list below scrolls. -->
+  <div class="pickscreen" id="projScreen" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Choose a project</span>
+        <span class="pick-sub">Tours you record are saved under it</span>
+      </div>
       <button class="iconbtn" id="projClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
     </header>
-    <div class="proj-body" id="projList"></div>
+    <div class="pick-body" id="projList"></div>
   </div>
 
-  <!-- Tour picker — open an existing route to extend -->
-  <div class="sheet" id="tourSheet" hidden>
-    <div class="card">
-      <h2>Open a tour to extend</h2>
-      <p class="hint">Pick a recorded route. Your new walk and POIs are added on top of it — the
-        existing path is kept.</p>
-      <div class="tourlist" id="tourList"><p class="hint">Loading…</p></div>
-      <div class="row"><button class="btn ghost" data-close="tourSheet">Cancel</button></div>
-    </div>
+  <!-- Tour picker — same layout: "New tour" first, then the project's saved tours to edit -->
+  <div class="pickscreen" id="tourScreen" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Choose a tour</span>
+        <span class="pick-sub">Start a new one, or pick a saved tour to edit</span>
+      </div>
+      <button class="iconbtn" id="tourClose" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body" id="tourList"></div>
   </div>
 
   <!-- Conflict resolver — choose how a new segment links back to the existing path -->
@@ -127,23 +183,70 @@
     </div>
   </div>
 
-  <!-- Save sheet -->
-  <div class="sheet" id="saveSheet" hidden>
-    <div class="card">
-      <h2 id="saveTitle">Save route</h2>
-      <p class="hint" id="saveSummary"></p>
-      <label>Route name *<input id="rName" type="text" placeholder="e.g. Heritage Loop" /></label>
-      <label>Status
-        <select id="rStatus"><option value="draft" selected>draft</option><option value="preview">preview</option><option value="live">live</option></select>
-      </label>
-      <label>Tracking mode
-        <select id="rTracking"><option value="beacons" selected>beacons</option><option value="vslam">vslam</option><option value="hybrid">hybrid</option></select>
-      </label>
-      <label>Description<textarea id="rDesc" placeholder="Optional"></textarea></label>
-      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through checkpoints (Directions API) — use the raw GPS track if unsure</label>
+  <!-- Name a new tour — required before recording starts. Full-screen frosted
+       layout; the form sits up top so the keyboard owns the empty bottom half. -->
+  <div class="pickscreen formscreen" id="nameSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Name this tour</span>
+        <span class="pick-sub">Required before recording — you can change it when saving</span>
+      </div>
+      <button class="iconbtn" data-close="nameSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Tour name *<input id="tName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" enterkeyhint="go" /></label>
+      <div class="row">
+        <button class="btn ghost" data-close="nameSheet">Cancel</button>
+        <button class="btn primary" id="nameGo" disabled>Start recording</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create a new project (admins) — opened from the first card of the project
+       picker. Same full-screen frosted layout; bottom half left for the keyboard. -->
+  <div class="pickscreen formscreen" id="newProjSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title">Create new project</span>
+        <span class="pick-sub">A site or venue — tours you record are saved under it</span>
+      </div>
+      <button class="iconbtn" data-close="newProjSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Project name *<input id="npName" type="text" placeholder="e.g. Singapore Botanic Gardens" autocomplete="off" enterkeyhint="next" /></label>
+      <label>Description<textarea id="npDesc" rows="2" placeholder="Optional"></textarea></label>
+      <!-- AiSee super-admins only: which organisation the project belongs to -->
+      <label id="npOrgRow" hidden>Organisation *<select id="npOrg"></select></label>
+      <div class="row">
+        <button class="btn ghost" data-close="newProjSheet">Cancel</button>
+        <button class="btn primary" id="npGo" disabled>Create project</button>
+      </div>
+      <p class="msg" id="npMsg"></p>
+    </div>
+  </div>
+
+  <!-- Save form — full-screen frosted layout, form up top, keyboard gets the bottom -->
+  <div class="pickscreen formscreen" id="saveSheet" hidden>
+    <header class="pick-head">
+      <div class="pick-htext">
+        <span class="pick-title" id="saveTitle">Save route</span>
+        <span class="pick-sub" id="saveSummary"></span>
+      </div>
+      <button class="iconbtn" data-close="saveSheet" aria-label="Close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    </header>
+    <div class="pick-body form-body">
+      <label>Route name *<input id="rName" type="text" placeholder="e.g. Heritage Loop" autocomplete="off" enterkeyhint="next" /></label>
+      <div class="fieldlabel">Status</div>
+      <div class="segs" id="rStatusSegs">
+        <button type="button" class="seg on" data-v="draft"><b>Draft</b></button>
+        <button type="button" class="seg" data-v="preview"><b>Preview</b></button>
+        <button type="button" class="seg" data-v="live"><b>Live</b></button>
+      </div>
+      <label>Description<textarea id="rDesc" rows="2" placeholder="Optional"></textarea></label>
+      <label class="check" id="rSnapRow"><input type="checkbox" id="rSnap" /> Snap path to footpaths through waypoints — keep off to use the raw GPS track</label>
       <div class="row">
         <button class="btn ghost" data-close="saveSheet">Cancel</button>
-        <button class="btn primary" id="saveGo">Save to backend</button>
+        <button class="btn primary" id="saveGo">Save</button>
       </div>
       <p class="msg" id="saveMsg"></p>
     </div>
@@ -159,36 +262,28 @@
       <p class="help-intro">Walk the route with your phone. The app draws your path on the map by
         itself — you just tap the buttons below to mark the important spots.</p>
       <div class="help-row">
+        <span class="help-btn"><i class="fa-solid fa-route"></i></span>
+        <div class="help-text"><b>Tour picker (top bar)</b><p>“New tour” records a fresh route. Pick a saved tour instead to edit it — add POIs or extend its path.</p></div>
+      </div>
+      <div class="help-row">
         <span class="help-btn rec"><i class="fa-solid fa-circle"></i></span>
-        <div class="help-text"><b>Record</b><p>Start walking your route. Tap again to pause, and once more to carry on.</p></div>
+        <div class="help-text"><b>Record / Stop</b><p>Start walking your route (a new tour asks for a name first). Tap <b>Stop</b> when you're done to save it.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-location-dot"></i></span>
-        <div class="help-text"><b>Checkpoint</b><p>Mark a spot the route must pass through — like a turn or a junction.</p></div>
+        <div class="help-text"><b>Waypoint</b><p>Mark a spot the route must pass through — like a turn or a junction.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-star"></i></span>
-        <div class="help-text"><b>POI</b><p>Mark a place worth stopping at and give it a name and a short note. This is what visitors will hear about.</p></div>
+        <div class="help-text"><b>1POI</b><p>A primary point of interest — a main stop. Give it a name (and optionally a category) — the briefing visitors hear is written later in the dashboard.</p></div>
+      </div>
+      <div class="help-row">
+        <span class="help-btn"><i class="fa-regular fa-star"></i></span>
+        <div class="help-text"><b>2POI</b><p>A secondary point of interest — something worth mentioning along the way, not a main stop.</p></div>
       </div>
       <div class="help-row">
         <span class="help-btn"><i class="fa-solid fa-rotate-left"></i></span>
-        <div class="help-text"><b>Undo</b><p>Remove the last checkpoint or POI you added, in case of a mistake.</p></div>
-      </div>
-      <div class="help-row">
-        <span class="help-btn fin"><i class="fa-solid fa-check"></i></span>
-        <div class="help-text"><b>Finish</b><p>Stop and save the route when you're done walking.</p></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Result sheet -->
-  <div class="sheet" id="resultSheet" hidden>
-    <div class="card">
-      <h2 id="resTitle">Saved</h2>
-      <p class="hint" id="resBody"></p>
-      <div class="row">
-        <a class="btn ghost" id="resOpen" target="_blank" rel="noopener">Open dashboard</a>
-        <button class="btn primary" data-close="resultSheet" id="resNew">New route</button>
+        <div class="help-text"><b>Undo</b><p>Remove the last waypoint or POI you added, in case of a mistake.</p></div>
       </div>
     </div>
   </div>
@@ -227,7 +322,7 @@
   <!-- Sign-in overlay (shown until authenticated via the backend login proxy) -->
   <div class="sheet signin" id="signinSheet" hidden>
     <div class="card signin-card">
-      <div class="signin-brand">Tours<span style="color:var(--purple)">·</span>Recorder</div>
+      <div class="signin-brand">AiSee<span style="color:var(--purple)">·</span>Recorder</div>
       <p class="hint">Sign in with your Aisee / AHLab Google account to record routes. No tokens or keys
         to enter — the backend handles login.</p>
       <button class="btn primary signin-btn" id="signinBtn">

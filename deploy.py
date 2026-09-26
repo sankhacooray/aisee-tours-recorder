@@ -13,7 +13,7 @@ Then: python3 deploy.py   (optionally set CNAME via env: CNAME=recorder.example.
 import os, shutil, subprocess, tempfile, time, sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-FILES = ["index.html", "styles.css", "app.js", "manifest.webmanifest", "icon.svg", "sw.js"]
+FILES = ["index.html", "styles.css", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "sw.js"]
 VERSION = time.strftime("%Y%m%d-%H%M%S")
 
 

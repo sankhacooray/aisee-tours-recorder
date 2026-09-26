@@ -57,6 +57,37 @@ function logError(context, err, extra) {
 function getErrorLog() { try { return JSON.parse(localStorage.getItem(ERRLOG_KEY)) || []; } catch (e) { return []; } }
 function clearErrorLog() { try { localStorage.removeItem(ERRLOG_KEY); } catch (e) {} }
 
+/* GET a backend action and return the parsed JSON. Apps Script occasionally
+ * answers with a Google HTML error page instead of JSON (throttling / too many
+ * simultaneous runs / a transient server error) — that used to surface as
+ * "Unexpected token '<'". Read as text, retry HTML replies with backoff, and log
+ * the page title/status to Diagnostics so a persistent failure is explainable. */
+function getJson(query, context, tries) {
+  tries = tries == null ? 3 : tries;
+  var url = backendUrl() + '?' + query;
+  return fetch(url, { redirect: 'follow' })
+    .then(function (r) { return r.text().then(function (text) { return { status: r.status, text: text }; }); })
+    .then(function (resp) {
+      try { return JSON.parse(resp.text); }
+      catch (e) {
+        var t = (resp.text || '').match(/<title>([^<]*)<\/title>/i);
+        var snippet = t ? t[1].trim() : (resp.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+        var err = new Error('backend returned a Google error page (HTTP ' + resp.status + (snippet ? ': ' + snippet : '') + ')');
+        err.retryable = true;
+        throw err;
+      }
+    })
+    .catch(function (err) {
+      if (tries > 1) {
+        var wait = (4 - tries) * 1500 + 1000;          // 1s, then 2.5s
+        return new Promise(function (res) { setTimeout(res, wait); })
+          .then(function () { return getJson(query, context, tries - 1); });
+      }
+      logError(context || 'getJson', err, { action: (query.match(/action=([^&]*)/) || [])[1] });
+      throw err;
+    });
+}
+
 /* POST JSON to the backend and return the parsed reply. Reads the body as TEXT
  * first, then parses — so when the Apps Script 302-follow hands back an HTML
  * error/login page (or the fetch is cut short by iOS backgrounding the tab), we
@@ -90,6 +121,8 @@ function postJson(payload, context) {
 /* ── State ───────────────────────────────────────────────── */
 var AUTH = null;          // { email, name, token }
 var mapsKey = '';
+var USER = null;          // bootstrap identity { email, role, org_id, … }
+var ORGS = [];            // [{org_id, name}] — only sent for AiSee super-admins
 var map, meMarker, accCircle, trackPoly;
 var trackPath = [];      // [{lat,lng}] raw GPS samples while recording
 var marks = [];          // [{kind, lat, lng, accuracy_m, marker, name?, category?, briefing_md?, geofence_radius_m?}]
@@ -97,6 +130,7 @@ var recording = false, started = false, follow = true, lastFix = null, watchId =
 
 /* ── Editing an existing tour ─────────────────────────────── */
 var editingRouteId = null;     // route_id when extending a loaded tour, else null
+var tourName = '';             // name given to a NEW tour before recording (required to start)
 var loadedRoute = null;        // the loaded Routes row (name/desc/status/… for the save sheet)
 var loadedVersion = null;      // content_version we loaded (optimistic concurrency)
 var existingPath = [];         // [{lat,lng}] decoded base track_polyline (frozen)
@@ -121,7 +155,7 @@ function markData(m) {
   return { kind: m.kind, existing: !!m.existing, poi_id: m.poi_id || null,
     lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m,
     name: m.name || '', category: m.category || '', briefing_md: m.briefing_md || '',
-    geofence_radius_m: m.geofence_radius_m };
+    poi_type: m.poi_type || 'primary', geofence_radius_m: m.geofence_radius_m };
 }
 /* True unsaved work worth recovering — a walked track, or any NEW (non-loaded) mark. */
 function hasUnsavedWork() {
@@ -134,7 +168,7 @@ function saveDraft(force) {
   lastDraftAt = now;
   var lr = loadedRoute ? { route_id: loadedRoute.route_id, name: loadedRoute.name, description: loadedRoute.description,
     status: loadedRoute.status, tracking_mode: loadedRoute.tracking_mode, content_version: loadedRoute.content_version } : null;
-  var draft = { v: 1, savedAt: now, projectId: $('projSel').value,
+  var draft = { v: 1, savedAt: now, projectId: $('projSel').value, tourName: tourName,
     editingRouteId: editingRouteId, loadedVersion: loadedVersion, loadedRoute: lr,
     existingPath: existingPath, trackPath: trackPath, started: started, saveOpId: saveOpId,
     marks: marks.map(markData) };
@@ -230,30 +264,48 @@ function randomNonce() {
 
 /* Post-login: fetch identity + Maps key + projects, then start the map. */
 function bootstrap() {
-  fetch(backendUrl() + '?action=bootstrap&auth=' + encodeURIComponent(AUTH.token))
-    .then(function (r) { return r.json(); })
+  getJson('action=bootstrap&auth=' + encodeURIComponent(AUTH.token), 'bootstrap')
     .then(function (res) {
       if (!res || !res.ok) { clearSession(); showSignIn((res && res.error) || 'Session expired — please sign in again.'); return; }
       setProfile((res.user && (res.user.name || res.user.email)) || AUTH.name || AUTH.email,
                  (res.user && res.user.email) || AUTH.email || '');
+      USER = res.user || null;
+      ORGS = res.orgs || [];
       fillProjects(res.projects || [], res.defaultProjectId || '');
+      setBarLoading(false);
       mapsKey = res.mapsKey || '';
-      if (!mapsKey) { showMapMsg('No Maps key set on the backend — run setMapsApiKey() in the editor.'); return; }
+      if (!mapsKey) { showMapMsg('No Maps key set on the backend — add the MAPS_API_KEY Script Property.'); return; }
+      showLocating();
+      startGeo();   // GPS warms up while the Maps script loads
       ensureMaps(mapsKey, function (ok) {
         if (!ok) { showMapMsg('Google Maps failed to load — check the key, enabled APIs, and billing.'); return; }
-        initMap(); startGeo(); maybeOfferRestore();
+        initMap(); maybeOfferRestore();
       });
     })
-    .catch(function (e) { showMapMsg('Could not reach the backend: ' + e.message); });
+    .catch(function (e) { showMapMsg('Could not reach the backend — ' + esc(e.message) +
+      '<br><button class="btn primary" style="margin-top:14px" onclick="location.reload()">Retry</button>'); });
 }
 
 var projectsData = [];   // [{project_id, name, description}] — backs the picker
+
+/* App-bar pickers show a skeleton wave + "Loading…" until bootstrap is back. */
+function setBarLoading(on) {
+  ['projBtn', 'tourBtn'].forEach(function (id) {
+    $(id).disabled = on;
+    $(id).classList.toggle('pb-loading', on);
+    $(id).classList.toggle('loading-wave', on);
+  });
+  if (!on) { syncProjLabel(); syncTourLabel(); }
+}
+/* project.create is admin-only on the backend; only offer it to those roles. */
+function canCreateProject() { return !!USER && (USER.role === 'aisee' || USER.role === 'admin'); }
 
 function fillProjects(projects, defaultProjectId) {
   projectsData = projects || [];
   var sel = $('projSel');
   while (sel.options.length > 1) sel.remove(1);
   projectsData.forEach(function (p) { var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; sel.appendChild(o); });
+
   var saved = ''; try { saved = localStorage.getItem(PROJECT_KEY) || ''; } catch (e) {}
   sel.value = saved || defaultProjectId || ((projectsData[0] || {}).project_id) || '';
   syncProjLabel();
@@ -270,37 +322,134 @@ function syncProjLabel() {
 
 /* Full-screen project picker (replaces the native <select> dropdown). */
 function openProjectPicker() {
-  if (!projectsData.length) return toast('No projects available');
+  if (!projectsData.length && !canCreateProject()) return toast('No projects available');
   renderProjectCards();
   show('projScreen');
 }
 function renderProjectCards() {
   var list = $('projList'); list.innerHTML = '';
   var cur = $('projSel').value;
+  if (canCreateProject()) list.appendChild(newProjectCard());
   projectsData.forEach(function (p) {
     var card = document.createElement('button');
     card.className = 'proj-card' + (p.project_id === cur ? ' sel' : '');
     var name = document.createElement('span'); name.className = 'pc-name'; name.textContent = p.name || p.project_id;
     card.appendChild(name);
     if (p.description) { var d = document.createElement('span'); d.className = 'pc-desc'; d.textContent = p.description; card.appendChild(d); }
-    var count = document.createElement('span'); count.className = 'pc-count'; count.textContent = '… tours'; card.appendChild(count);
+    // Tour count arrives from a second request — until then the card shows a
+    // skeleton pill with a sweeping "wave" so it reads as still loading.
+    var count = document.createElement('span'); count.className = 'skel w25'; card.appendChild(count);
+    card.classList.add('loading-wave');
     if (p.project_id === cur) { var t = document.createElement('i'); t.className = 'fa-solid fa-circle-check pc-tick'; card.appendChild(t); }
     card.addEventListener('click', function () { selectProject(p.project_id); });
     list.appendChild(card);
-    loadProjectCount(p.project_id, count);
+    loadProjectCount(p.project_id, count, card);
   });
 }
-function loadProjectCount(pid, el) {
-  if (!AUTH || !AUTH.token) { el.textContent = '— tours'; return; }
-  fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+function newProjectCard() {
+  var card = document.createElement('button');
+  card.className = 'proj-card new';
+  card.innerHTML = '<span class="pc-plus"><i class="fa-solid fa-plus"></i></span>' +
+    '<span style="display:flex;flex-direction:column;gap:3px;min-width:0"><span class="pc-name">Create new project</span>' +
+    '<span class="pc-desc">Add a new site or venue to record tours in</span></span>';
+  card.addEventListener('click', openNewProject);
+  return card;
+}
+function openNewProject() {
+  $('npName').value = ''; $('npDesc').value = ''; $('npMsg').textContent = ''; $('npMsg').className = 'msg';
+  $('npGo').disabled = true; $('npGo').textContent = 'Create project';
+  // AiSee super-admins pick the org (default: the current project's org); for
+  // everyone else the backend uses their own org, so there's nothing to choose.
+  var super_ = USER && USER.role === 'aisee';
+  $('npOrgRow').hidden = !super_;
+  if (super_) {
+    var sel = $('npOrg'); sel.innerHTML = '';
+    ORGS.forEach(function (o) { var op = document.createElement('option'); op.value = o.org_id; op.textContent = o.name || o.org_id; sel.appendChild(op); });
+    var cur = projectsData.filter(function (p) { return p.project_id === $('projSel').value; })[0];
+    if (cur && cur.org_id && ORGS.some(function (o) { return o.org_id === cur.org_id; })) sel.value = cur.org_id;
+  }
+  show('newProjSheet'); focusNow($('npName'));
+}
+/* Lock the whole form (inputs, Cancel, ✕) while the backend creates the project. */
+function setNewProjBusy(on) {
+  var fs = $('newProjSheet');
+  fs.querySelectorAll('input, textarea, select, button').forEach(function (el) { el.disabled = on; });
+  fs.querySelector('.form-body').classList.toggle('loading-wave', on);
+  fs.classList.toggle('busy', on);
+  $('npGo').textContent = on ? 'Creating…' : 'Create project';
+  if (!on) $('npGo').disabled = !$('npName').value.trim();
+}
+function createProject() {
+  var name = $('npName').value.trim();
+  if (!name || $('npGo').disabled) return;
+  var msg = $('npMsg'); msg.className = 'msg';
+  var knownIds = projectsData.map(function (p) { return p.project_id; });
+  setNewProjBusy(true);
+  msg.textContent = 'Setting up the project — this can take several seconds.';
+
+  var done = function (p) {
+    setNewProjBusy(false);
+    projectsData.push({ project_id: p.project_id, org_id: p.org_id || '', name: p.name, description: p.description });
+    var o = document.createElement('option'); o.value = p.project_id; o.textContent = p.name; $('projSel').appendChild(o);
+    hide('newProjSheet');
+    selectProject(p.project_id);
+    toast('Project “' + p.name + '” created');
+  };
+  var fail = function (e) {
+    setNewProjBusy(false);
+    msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err';
+  };
+
+  postJson({ action: 'project.create', auth: AUTH.token, name: name,
+             description: $('npDesc').value.trim(),
+             orgId: (USER && USER.role === 'aisee') ? $('npOrg').value : '' }, 'project.create')   // ignored server-side for non-AiSee
+    .then(function (res) { done(res.project || {}); })
+    .catch(function (e) {
+      // Creating a project (new Sheet + Drive folder) is slow, and on mobile the
+      // reply can get lost ("Failed to fetch") even though the backend finished.
+      // Before reporting failure, check whether a project with this name now
+      // exists — if so it went through (and a retry would make a duplicate).
+      if (!(e instanceof TypeError || /did not return JSON/.test(e.message))) return fail(e);   // a real backend rejection
+      msg.textContent = 'Checking whether the project was created…';
+      getJson('action=projects&auth=' + encodeURIComponent(AUTH.token), 'project.create.verify')
+        .then(function (res) {
+          var hit = (res && res.projects || []).filter(function (p) {
+            return knownIds.indexOf(p.project_id) === -1 && String(p.name).trim() === name;
+          })[0];
+          if (hit) done(hit); else fail(e);
+        })
+        .catch(function () { fail(e); });
+    });
+}
+
+/* Tour counts: at most 2 requests in flight, so opening the picker doesn't fire
+ * one Apps Script run per project at once (the simultaneous-run limit). */
+var countQueue = [], countActive = 0;
+function pumpCounts() {
+  while (countActive < 2 && countQueue.length) {
+    countActive++;
+    countQueue.shift()(function () { countActive--; pumpCounts(); });
+  }
+}
+function loadProjectCount(pid, el, card) {
+  var set = function (txt) { el.className = 'pc-count'; el.textContent = txt; card.classList.remove('loading-wave'); };
+  if (!AUTH || !AUTH.token) { set('— tours'); return; }
+  countQueue.push(function (next) {
+  getJson('action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'projectCount')
     .then(function (res) {
       var n = (res && res.ok) ? (typeof res.count === 'number' ? res.count : (res.routes ? res.routes.length : null)) : null;
-      el.textContent = (n == null ? '—' : n) + ' tour' + (n === 1 ? '' : 's');
+      set((n == null ? '—' : n) + ' tour' + (n === 1 ? '' : 's'));
     })
-    .catch(function () { el.textContent = '— tours'; });
+    .catch(function () { set('— tours'); })
+    .then(next);
+  });
+  pumpCounts();
 }
 function selectProject(pid) {
+  if (pid !== $('projSel').value && (editingRouteId || hasUnsavedWork())) {
+    if (!confirm('Switch project? The current tour will be closed' + (hasUnsavedWork() ? ' and unsaved recording discarded.' : '.'))) return;
+    resetRoute();
+  }
   $('projSel').value = pid;
   try { localStorage.setItem(PROJECT_KEY, pid); } catch (e) {}
   syncProjLabel();
@@ -323,19 +472,68 @@ function ensureMaps(key, cb) {
   document.head.appendChild(s);
 }
 
-function showMapMsg(t) { $('map').innerHTML = '<div class="map-msg">' + t + '</div>'; }
+function showMapMsg(t) { hideLocating(); $('map').innerHTML = '<div class="map-msg">' + t + '</div>'; }
+
+/* ── Locating overlay ────────────────────────────────────────
+ * Shown from bootstrap until BOTH the map has rendered and the first GPS fix
+ * is in, so the map opens already centred on the walker. After a few seconds
+ * without a fix (or if location is denied) it offers "Show map anyway". */
+var LASTFIX_KEY = 'tours.recorder.lastFix';
+var locMapIdle = false, locHadFix = false, locDone = false, locTimer = null;
+function showLocating() {
+  locDone = false; $('locating').hidden = false;
+  $('locating').classList.remove('out');
+  clearTimeout(locTimer);
+  locTimer = setTimeout(function () {
+    if (locDone) return;
+    $('locSub').textContent = 'Still searching — open sky helps';
+    $('locSkip').hidden = false;
+  }, 8000);
+}
+function hideLocating() {
+  if (locDone) return;
+  locDone = true; clearTimeout(locTimer);
+  var el = $('locating');
+  el.classList.add('out');
+  setTimeout(function () { el.hidden = true; }, 350);
+}
+function maybeRevealMap() { if (locMapIdle && locHadFix) hideLocating(); }
+function storedFix() {
+  try { var f = JSON.parse(localStorage.getItem(LASTFIX_KEY) || 'null'); if (f && isFinite(f.lat) && isFinite(f.lng)) return f; } catch (e) {}
+  return null;
+}
 
 function initMap() {
+  // Open on the live fix if GPS beat the Maps script, else the last known spot.
+  var start = lastFix || storedFix() || { lat: 1.3066, lng: 103.8155 };
   map = new google.maps.Map($('map'), {
-    center: { lat: 1.3066, lng: 103.8155 }, zoom: 17, mapTypeId: 'roadmap',
-    disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy'
+    center: { lat: start.lat, lng: start.lng }, zoom: 17, mapTypeId: 'roadmap',
+    disableDefaultUI: true, zoomControl: true, gestureHandling: 'greedy',
+    zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER }   // clear of the bottom chips
   });
-  map.addListener('dragstart', function () { follow = false; });
+  // Follow-me like Google Maps: the map tracks the walker until you drag it;
+  // then a re-centre button appears to resume following.
+  map.addListener('dragstart', function () { setFollow(false); });
   trackPoly = new google.maps.Polyline({ map: map, path: [], strokeColor: '#1B4332', strokeOpacity: .95, strokeWeight: 5 });
   meMarker = new google.maps.Marker({ map: map, zIndex: 999,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#1769ff', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   accCircle = new google.maps.Circle({ map: map, fillColor: '#1769ff', fillOpacity: .10, strokeColor: '#1769ff', strokeOpacity: .35, strokeWeight: 1 });
+  if (lastFix) { meMarker.setPosition({ lat: lastFix.lat, lng: lastFix.lng });
+    accCircle.setCenter({ lat: lastFix.lat, lng: lastFix.lng }); accCircle.setRadius(Math.max(lastFix.accuracy_m, 3)); }
+  google.maps.event.addListenerOnce(map, 'idle', function () { locMapIdle = true; maybeRevealMap(); });
+  syncRecBtn();   // apply the GPS gate before the first fix arrives
   $('hud').hidden = false;
+}
+
+/* Follow mode: pan with each GPS fix. Off after a manual drag or when fitting a
+ * whole tour; the re-centre button (shown only while off) turns it back on. */
+function setFollow(on) {
+  follow = !!on;
+  var b = $('recenterBtn'); if (b) b.hidden = follow || !map;
+}
+function recenter() {
+  setFollow(true);
+  if (map && lastFix) { map.panTo({ lat: lastFix.lat, lng: lastFix.lng }); if (map.getZoom() < 17) map.setZoom(18); }
 }
 
 /* ── Geolocation ─────────────────────────────────────────── */
@@ -343,7 +541,16 @@ function startGeo() {
   if (!navigator.geolocation) { toast('No geolocation on this device'); return; }
   watchId = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
 }
-function onErr(e) { setGps(null); toast('GPS error: ' + (e && e.message || e)); }
+function onErr(e) {
+  setGps(null);
+  if (!locDone && e && e.code === 1) {   // PERMISSION_DENIED
+    $('locTitle').textContent = 'Location access is off';
+    $('locSub').textContent = 'Allow location for this site to record routes';
+    $('locSkip').hidden = false;
+    return;
+  }
+  toast('GPS error: ' + (e && e.message || e));
+}
 function onPos(pos) {
   var c = pos.coords;
   lastFix = { lat: c.latitude, lng: c.longitude, accuracy_m: Math.round(c.accuracy) };
@@ -356,18 +563,35 @@ function onPos(pos) {
     saveDraft(false);   // throttled (≤ every 4s) so a lock mid-walk keeps the track
   }
   if (tourBox) checkArea();
-  if (follow && map) map.panTo(ll);
+  if (!locHadFix) {
+    // First fix: jump (don't animate) so there's no slide from the default spot.
+    locHadFix = true;
+    if (map) map.setCenter(ll);
+    maybeRevealMap();
+  } else if (follow && map) map.panTo(ll);
+  try { localStorage.setItem(LASTFIX_KEY, JSON.stringify({ lat: ll.lat, lng: ll.lng })); } catch (e) {}
 }
+/* GPS quality gate: a red reading (no fix, or worse than ±GPS_OK_M) blocks
+ * STARTING a recording — a walk begun on a bad fix records a wandering path.
+ * Stopping is never blocked, and a dip mid-walk doesn't stop the recording. */
+var GPS_OK_M = 30;              // yellow/green threshold (matches the dot colours)
+var gpsBad = true;              // no fix yet counts as bad
 function setGps(acc) {
   var dot = $('gpsDot'), txt = $('gpsText');
-  if (acc == null) { dot.className = 'dot'; txt.textContent = 'no fix'; return; }
-  dot.className = 'dot ' + (acc <= 10 ? 'ok' : acc <= 30 ? 'mid' : '');
-  txt.textContent = '±' + acc + 'm';
+  if (acc == null) { dot.className = 'dot'; txt.textContent = 'no fix'; }
+  else {
+    dot.className = 'dot ' + (acc <= 10 ? 'ok' : acc <= GPS_OK_M ? 'mid' : '');
+    txt.textContent = '±' + acc + 'm';
+  }
+  gpsBad = acc == null || acc > GPS_OK_M;
+  $('gpsWaitAcc').textContent = acc == null ? 'no GPS fix yet' : 'now ±' + acc + ' m';
+  syncRecBtn();
 }
 
 /* ── Marker styling + focus pulse ────────────────────────── */
 var CP_COLOR = '#1971C2';   // checkpoints — blue (matches the counter text)
-var POI_COLOR = '#D7263D';  // POIs — red
+var POI_COLOR = '#D7263D';  // primary POIs (1POI) — red
+var POI2_COLOR = '#E8590C'; // secondary POIs (2POI) — orange
 
 /* A gentle expanding/shrinking ring under each point to draw the eye (and stay
  * visible even when the blue location dot sits right on top of a fresh mark).
@@ -404,35 +628,82 @@ function clearPulses() {
 
 /* Create the numbered red POI marker + geofence ring used for both new and
  * loaded POIs, so they look identical. */
+function isSecondary(m) { return m.poi_type === 'secondary'; }
 function poiVisual(m, n) {
-  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: m.name, zIndex: 5,
-    label: { text: String(n), color: '#fff', fontSize: '11px', fontWeight: '700' },
-    icon: { path: google.maps.SymbolPath.CIRCLE, scale: 11, fillColor: POI_COLOR, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
+  var sec = isSecondary(m), color = sec ? POI2_COLOR : POI_COLOR;
+  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: m.name, zIndex: sec ? 4 : 5,
+    label: { text: String(n), color: '#fff', fontSize: sec ? '10px' : '11px', fontWeight: '700' },
+    icon: { path: google.maps.SymbolPath.CIRCLE, scale: sec ? 9 : 11, fillColor: color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   m.circle = new google.maps.Circle({ map: map, center: { lat: m.lat, lng: m.lng }, radius: m.geofence_radius_m,
-    fillColor: POI_COLOR, fillOpacity: .10, strokeColor: POI_COLOR, strokeOpacity: .5, strokeWeight: 1, clickable: false });
-  m.pulse = addPulse(m.lat, m.lng, POI_COLOR);
+    fillColor: color, fillOpacity: sec ? .06 : .10, strokeColor: color, strokeOpacity: sec ? .35 : .5, strokeWeight: 1, clickable: false });
+  m.pulse = addPulse(m.lat, m.lng, color);
+}
+/* Next marker number within a POI tier (1POI and 2POI are numbered separately). */
+function poiNumber(type) {
+  return marks.filter(function (x) { return x.kind === 'poi' && (x.poi_type || 'primary') === type; }).length + 1;
 }
 function checkpointVisual(m) {
-  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: 'checkpoint', zIndex: 4,
+  m.marker = new google.maps.Marker({ map: map, position: { lat: m.lat, lng: m.lng }, title: 'waypoint', zIndex: 4,
     icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: CP_COLOR, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2.5 } });
   m.pulse = addPulse(m.lat, m.lng, CP_COLOR);
 }
 
 /* ── Recording + marking ─────────────────────────────────── */
+var MARK_BTNS = ['cpBtn', 'poiBtn', 'poi2Btn'];
+
+/* Record ⇄ Stop. Stop finishes the walk (opens the save sheet); cancelling that
+ * sheet leaves the button on "Resume" to carry on the same walk. Marks can only
+ * be dropped while recording. */
+function onRecTap() {
+  if (recording) { openSave(); return; }
+  if (gpsBad) { toast('Waiting for a stronger GPS signal'); return; }
+  if (farOutside) { toast('Walk back to the tour area to record'); return; }
+  if (!$('projSel').value) { toast('Pick a project first'); openProjectPicker(); return; }
+  if (!editingRouteId && !tourName) { openNameSheet(); return; }
+  setRecording(true);
+}
+function syncRecBtn() {
+  $('recBtn').classList.toggle('on', recording);
+  $('recBtn').querySelector('span:last-child').textContent = recording ? 'Stop' : (started ? 'Resume' : 'Record');
+  $('recDot').hidden = !recording;
+  // Record is blocked while away from a loaded tour, or (to start/resume) on a weak GPS fix.
+  var waitGps = !recording && gpsBad;
+  $('recBtn').disabled = farOutside || waitGps;
+  $('gpsWait').hidden = !waitGps || farOutside;
+  MARK_BTNS.forEach(function (id) { $(id).disabled = !recording || farOutside; });
+}
 function setRecording(on) {
   // Guard: don't let recording START while far outside a loaded tour's area.
   if (on && !recording && farOutside) { toast('Walk back to the tour area to record'); return; }
   recording = on;
-  $('recBtn').classList.toggle('on', on);
-  $('recBtn').querySelector('span:last-child').textContent = on ? 'Pause' : (started ? 'Resume' : 'Record');
-  $('recDot').hidden = !on;
   if (on) {
     started = true;
-    follow = true;
-    ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = false; });
+    setFollow(true);
     if (lastFix) { trackPath.push({ lat: lastFix.lat, lng: lastFix.lng }); trackPoly.setPath(trackPath); }
   }
-  saveDraft(true);   // capture the record/pause/resume transition
+  syncRecBtn();
+  saveDraft(true);   // capture the record/stop transition
+}
+
+/* ── New-tour name prompt ────────────────────────────────── */
+function openNameSheet() {
+  $('tName').value = tourName || '';
+  $('nameGo').disabled = !$('tName').value.trim();
+  show('nameSheet'); focusNow($('tName'));
+}
+function submitName() {
+  var v = $('tName').value.trim();
+  if (!v) return;
+  tourName = v; syncTourLabel();
+  hide('nameSheet');
+  setRecording(true);
+}
+
+/* Tour picker label: "New tour", the new tour's name (tagged "new"), or the loaded tour. */
+function syncTourLabel() {
+  var editing = !!editingRouteId;
+  $('tourBtnLabel').textContent = editing ? ((loadedRoute && loadedRoute.name) || editingRouteId) : (tourName || 'New tour');
+  $('tourBtnTag').hidden = editing || !tourName;
 }
 
 function addCheckpoint() {
@@ -440,26 +711,28 @@ function addCheckpoint() {
   if (farOutside) return toast('Walk back to the tour area first');
   var m = { kind: 'checkpoint', lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
   checkpointVisual(m);
-  marks.push(m); afterMark('Checkpoint dropped');
+  marks.push(m); afterMark('Waypoint dropped');
 }
 
-function openPoi() {
+var pendingPoiType = 'primary';
+function openPoi(type) {
+  pendingPoiType = type === 'secondary' ? 'secondary' : 'primary';
+  $('poiTitle').textContent = pendingPoiType === 'secondary' ? 'Mark a secondary POI (2POI)' : 'Mark a primary POI (1POI)';
   if (!lastFix) return toast('Waiting for GPS fix…');
   if (farOutside) return toast('Walk back to the tour area first');
   pendingPoi = { lat: lastFix.lat, lng: lastFix.lng, accuracy_m: lastFix.accuracy_m };
   $('poiCoord').textContent = fmt(pendingPoi.lat) + ', ' + fmt(pendingPoi.lng) + '  (±' + pendingPoi.accuracy_m + 'm)';
-  $('poiName').value = ''; $('poiCat').value = ''; $('poiBrief').value = ''; $('poiRad').value = '20';
-  show('poiSheet'); setTimeout(function () { $('poiName').focus(); }, 50);
+  $('poiName').value = ''; $('poiCat').value = ''; setSeg('poiRadSegs', '25');
+  show('poiSheet'); focusNow($('poiName'));
 }
 function savePoi() {
   var name = $('poiName').value.trim();
   if (!name) return toast('POI needs a name');
-  var m = { kind: 'poi', lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
-    name: name, category: $('poiCat').value.trim(), briefing_md: $('poiBrief').value.trim(),
-    geofence_radius_m: Number($('poiRad').value) || 20 };
-  var n = marks.filter(function (x) { return x.kind === 'poi'; }).length + 1;
-  poiVisual(m, n);
-  marks.push(m); hide('poiSheet'); afterMark('POI “' + name + '” dropped');
+  var m = { kind: 'poi', poi_type: pendingPoiType, lat: pendingPoi.lat, lng: pendingPoi.lng, accuracy_m: pendingPoi.accuracy_m,
+    name: name, category: $('poiCat').value.trim(), briefing_md: '',   // briefings are written later in the dashboard
+    geofence_radius_m: Number(segVal('poiRadSegs')) || 25 };
+  poiVisual(m, poiNumber(pendingPoiType));
+  marks.push(m); hide('poiSheet'); afterMark((isSecondary(m) ? '2POI' : '1POI') + ' “' + name + '” dropped');
 }
 
 function undo() {
@@ -469,7 +742,7 @@ function undo() {
   if (m.marker) m.marker.setMap(null);
   if (m.circle) m.circle.setMap(null);
   removePulse(m.pulse);
-  afterMark('Removed ' + m.kind);
+  afterMark('Removed ' + (m.kind === 'checkpoint' ? 'waypoint' : (isSecondary(m) ? '2POI' : '1POI')));
 }
 function afterMark(msg) {
   updateCounts();
@@ -480,11 +753,12 @@ function afterMark(msg) {
 
 function updateCounts() {
   var cp = marks.filter(function (m) { return m.kind === 'checkpoint'; }).length;
-  var po = marks.filter(function (m) { return m.kind === 'poi'; }).length;
+  var p1 = marks.filter(function (m) { return m.kind === 'poi' && !isSecondary(m); }).length;
+  var p2 = marks.filter(function (m) { return m.kind === 'poi' && isSecondary(m); }).length;
   $('counts').innerHTML =
-    '<span class="c-cp">' + cp + ' checkpoint' + (cp === 1 ? '' : 's') + '</span>' +
-    ' · ' +
-    '<span class="c-poi">' + po + ' POI' + (po === 1 ? '' : 's') + '</span>';
+    '<span class="c-cp">' + cp + ' waypoint' + (cp === 1 ? '' : 's') + '</span>' +
+    ' · <span class="c-poi">' + p1 + ' 1POI</span>' +
+    ' · <span class="c-poi2">' + p2 + ' 2POI</span>';
 }
 function updateDist() {
   if (!google.maps.geometry || trackPath.length < 2) { $('dist').textContent = ''; return; }
@@ -504,8 +778,7 @@ function openSave() {
     var r = loadedRoute || {};
     $('rName').value = r.name || '';
     $('rDesc').value = r.description || '';
-    if (r.status) $('rStatus').value = r.status;
-    if (r.tracking_mode) $('rTracking').value = r.tracking_mode;
+    setSeg('rStatusSegs', r.status || 'draft');
     var newPoi = marks.filter(function (m) { return m.kind === 'poi' && !m.existing; }).length;
     var exPoi  = marks.filter(function (m) { return m.kind === 'poi' && m.existing; }).length;
     $('saveSummary').textContent = exPoi + ' existing + ' + newPoi + ' new POI' + (newPoi === 1 ? '' : 's') +
@@ -515,10 +788,12 @@ function openSave() {
     var po = marks.filter(function (m) { return m.kind === 'poi'; }).length;
     var dist = (google.maps.geometry && trackPath.length > 1)
       ? Math.round(google.maps.geometry.spherical.computeLength(trackPath.map(function (c) { return new google.maps.LatLng(c.lat, c.lng); }))) : 0;
-    $('saveSummary').textContent = trackPath.length + ' GPS points · ' + cp + ' checkpoints · ' + po + ' POIs · ' + dist + ' m';
-    $('rName').value = '';
+    $('saveSummary').textContent = trackPath.length + ' GPS points · ' + cp + ' waypoints · ' + po + ' POIs · ' + dist + ' m';
+    $('rName').value = tourName;
+    setSeg('rStatusSegs', 'draft');
   }
-  show('saveSheet'); setTimeout(function () { $('rName').focus(); }, 50);
+  setSaveBusy(false);
+  show('saveSheet');
 }
 
 function doSave() {
@@ -545,18 +820,21 @@ function doSave() {
       poiMarks = poiMarks.slice().sort(function (a, b) { return alongDistance(merged, a) - alongDistance(merged, b); });
     }
     var pois = poiMarks.map(function (m) {
-      var o = { name: m.name, category: m.category, lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m, geofence_radius_m: m.geofence_radius_m, briefing_md: m.briefing_md };
+      var o = { name: m.name, category: m.category, poi_type: m.poi_type || 'primary', lat: m.lat, lng: m.lng, accuracy_m: m.accuracy_m, geofence_radius_m: m.geofence_radius_m, briefing_md: m.briefing_md };
       if (m.poi_id) o.poi_id = m.poi_id;   // keep existing POIs' identity on update
       return o;
     });
     var start = (merged && merged[0]) || trackPath[0] || (marks[0] ? { lat: marks[0].lat, lng: marks[0].lng } : null);
     var payload = {
       auth: AUTH.token, projectId: projectId,
-      name: name, description: $('rDesc').value.trim(), status: $('rStatus').value, tracking_mode: $('rTracking').value,
+      name: name, description: $('rDesc').value.trim(), status: segVal('rStatusSegs'),
       distance_m: distM, est_duration_min: distM ? Math.max(1, Math.round(distM / 80)) : '',
       start_lat: start ? start.lat : '', start_lng: start ? start.lng : '',
       track_polyline: track, waypoints: checkpoints, pois: pois
     };
+    // Tours are GPS-tracked (beacons / vSLAM were never built): new routes are
+    // stamped 'gps'; an update leaves the stored tracking_mode alone.
+    if (!editing) payload.tracking_mode = 'gps';
     if (editing) {
       payload.action = 'route.update'; payload.routeId = editingRouteId;
       if (loadedVersion != null) payload.expected_content_version = loadedVersion;
@@ -572,12 +850,16 @@ function doSave() {
     postJson(payload, editing ? 'route.update' : 'route.create')
       .then(function (res) {
         if (editing && res.content_version != null) loadedVersion = Number(res.content_version);
+        if (editing && loadedRoute) { loadedRoute.name = name; syncTourLabel(); }
         saveOpId = null; clearDraft();   // committed — this route is no longer an unsaved draft
-        hide('saveSheet'); showResult(res.routeId || editingRouteId, editing);
+        hide('saveSheet'); setSaveBusy(false);
+        toast((editing ? 'Updated “' : 'Saved “') + name + '”');
+        reloadSavedTour(res.routeId || editingRouteId);
       })
-      .catch(function (e) { msg.textContent = 'Failed: ' + e.message + ' — tap Save to retry (no duplicate will be created).'; msg.className = 'msg err'; });
+      .catch(function (e) { setSaveBusy(false); msg.textContent = 'Failed: ' + e.message + ' — tap Save to retry (no duplicate will be created).'; msg.className = 'msg err'; });
   };
-  var onErr = function (err) { msg.textContent = err; msg.className = 'msg err'; };
+  var onErr = function (err) { setSaveBusy(false); msg.textContent = err; msg.className = 'msg err'; };
+  setSaveBusy(true);
 
   if (editing) buildEditedTrack(finish, onErr);
   else buildTrack(snap, checkpoints, finish, onErr);
@@ -596,7 +878,7 @@ function buildTrack(snap, checkpoints, cb, errCb) {
     cb(track, trackPath.length > 1 ? len(trackPath) : '', trackPath);
     return;
   }
-  if (checkpoints.length < 2) { errCb('Need ≥2 checkpoints to snap a path.'); return; }
+  if (checkpoints.length < 2) { errCb('Need ≥2 waypoints to snap a path.'); return; }
   var wp = checkpoints.slice(0, 25);
   new google.maps.DirectionsService().route({
     origin: { lat: wp[0].lat, lng: wp[0].lng },
@@ -610,13 +892,27 @@ function buildTrack(snap, checkpoints, cb, errCb) {
   });
 }
 
-function showResult(routeId, editing) {
-  $('resTitle').textContent = editing ? 'Tour updated' : 'Route saved';
-  $('resBody').textContent = editing
-    ? 'Updated “' + routeId + '”. The dashboard now shows the extended path and the new POIs.'
-    : 'Created “' + routeId + '”. It now renders on the dashboard map.';
-  $('resOpen').href = backendUrl() || '#';
-  show('resultSheet');
+/* Lock the whole save form (fields, status, Cancel, ✕) while saving. */
+function setSaveBusy(on) {
+  var fs = $('saveSheet');
+  fs.querySelectorAll('input, textarea, select, button').forEach(function (el) { el.disabled = on; });
+  fs.querySelector('.form-body').classList.toggle('loading-wave', on);
+  fs.classList.toggle('busy', on);
+  $('saveGo').textContent = on ? 'Saving…' : 'Save';
+}
+
+/* After a save there's no result card: re-open the saved tour from the backend
+ * so the map + tour picker show it as it's now stored (new marks become part of
+ * it). If that fetch fails, fall back to a clean "New tour". */
+function reloadSavedTour(routeId) {
+  if (!routeId) { resetRoute(); return; }
+  getJson('action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) +
+          '&projectId=' + encodeURIComponent($('projSel').value), 'reloadSavedTour')
+    .then(function (res) {
+      if (!res || !res.ok) throw new Error((res && res.error) || 'could not reload tour');
+      hydrateTour(res, true);
+    })
+    .catch(function () { resetRoute(); });
 }
 function resetRoute() {
   marks.forEach(function (m) { if (m.marker) m.marker.setMap(null); if (m.circle) m.circle.setMap(null); });
@@ -630,10 +926,10 @@ function resetRoute() {
   editingRouteId = null; loadedRoute = null; loadedVersion = null;
   existingPath = []; if (existingPoly) { existingPoly.setMap(null); existingPoly = null; }
   tourBox = null; clearLinkTemps();
-  setFar(false); $('editBanner').hidden = true;
-  $('recBtn').classList.remove('on'); $('recBtn').querySelector('span:last-child').textContent = 'Record'; $('recDot').hidden = true;
-  $('recBtn').disabled = false;
-  ['cpBtn', 'poiBtn', 'finBtn', 'undoBtn'].forEach(function (id) { $(id).disabled = true; });
+  tourName = ''; syncTourLabel();
+  setFar(false);
+  $('recBtn').disabled = false; syncRecBtn();
+  $('undoBtn').disabled = true;
   updateCounts(); $('dist').textContent = '';
 }
 
@@ -651,11 +947,12 @@ function maybeOfferRestore() {
   pendingDraft = d;
   var np = d.marks.filter(function (m) { return m.kind === 'poi' && !m.existing; }).length;
   var cp = d.marks.filter(function (m) { return m.kind === 'checkpoint' && !m.existing; }).length;
+  var tn = d.tourName || (d.loadedRoute && d.loadedRoute.name) || '';
   var pts = d.trackPath ? d.trackPath.length : 0;
   var proj = projName(d.projectId) || d.projectId || '';
   $('resumeSummary').textContent = pts + ' GPS point' + (pts === 1 ? '' : 's') + ' · ' +
-    np + ' POI' + (np === 1 ? '' : 's') + ' · ' + cp + ' checkpoint' + (cp === 1 ? '' : 's') +
-    (d.editingRouteId ? ' · extending a tour' : '') + (proj ? ' · ' + proj : '') +
+    np + ' POI' + (np === 1 ? '' : 's') + ' · ' + cp + ' waypoint' + (cp === 1 ? '' : 's') +
+    (tn ? ' · “' + tn + '”' : '') + (d.editingRouteId ? ' · editing' : '') + (proj ? ' · ' + proj : '') +
     (d.savedAt ? ' · ' + timeAgo(d.savedAt) : '');
   show('resumeSheet');
 }
@@ -667,6 +964,7 @@ function restoreDraft(d) {
     if (known) { sel.value = d.projectId; try { localStorage.setItem(PROJECT_KEY, d.projectId); } catch (e) {} syncProjLabel(); }
   }
   saveOpId = d.saveOpId || null;
+  tourName = d.tourName || '';
 
   if (d.editingRouteId) {
     editingRouteId = d.editingRouteId;
@@ -678,17 +976,16 @@ function restoreDraft(d) {
         strokeColor: '#6B7B73', strokeOpacity: .9, strokeWeight: 5,
         icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: .9, scale: 2.5 }, offset: '0', repeat: '14px' }] });
     }
-    $('editName').textContent = (loadedRoute && loadedRoute.name) || 'tour';
-    $('editBanner').hidden = false;
   }
+  syncTourLabel();
 
-  var poiN = 0;
   d.marks.forEach(function (md) {
     var m = { kind: md.kind, existing: !!md.existing, lat: Number(md.lat), lng: Number(md.lng),
       accuracy_m: md.accuracy_m, name: md.name || '', category: md.category || '',
       briefing_md: md.briefing_md || '', geofence_radius_m: Number(md.geofence_radius_m) || 20 };
     if (md.poi_id) m.poi_id = md.poi_id;
-    if (m.kind === 'poi') { poiN++; poiVisual(m, poiN); } else checkpointVisual(m);
+    if (m.kind === 'poi') { m.poi_type = md.poi_type === 'secondary' ? 'secondary' : 'primary'; poiVisual(m, poiNumber(m.poi_type)); }
+    else checkpointVisual(m);
     marks.push(m);
   });
 
@@ -697,11 +994,7 @@ function restoreDraft(d) {
   started = !!d.started; recording = false;
 
   $('hud').hidden = false;
-  var canPlace = !!editingRouteId || started;
-  ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = !canPlace; });
-  $('recBtn').classList.remove('on');
-  $('recBtn').querySelector('span:last-child').textContent = started ? 'Resume' : 'Record';
-  $('recBtn').disabled = false; $('recDot').hidden = true;
+  $('recBtn').disabled = false; syncRecBtn();
   $('undoBtn').disabled = !marks.some(function (m) { return !m.existing; });
 
   computeTourBox(); updateCounts(); updateDist();
@@ -718,46 +1011,81 @@ function openTourPicker() {
   if (!AUTH || !AUTH.token) return showSignIn();
   var pid = $('projSel').value;
   if (!pid) return toast('Pick a project first');
-  var list = $('tourList'); list.innerHTML = '<p class="hint">Loading…</p>';
-  show('tourSheet');
-  fetch(backendUrl() + '?action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+  var list = $('tourList'); list.innerHTML = '';
+  list.appendChild(newTourItem());
+  // Skeleton cards with a loading wave until the saved-tour list arrives.
+  var skel = '';
+  for (var k = 0; k < 3; k++) skel += '<div class="tour-item loading-wave tour-skel"><span class="skel w60"></span><span class="skel w40"></span></div>';
+  list.insertAdjacentHTML('beforeend', skel);
+  show('tourScreen');
+  getJson('action=routes&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'tourList')
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not load tours');
       renderTourList(res.routes || []);
     })
-    .catch(function (e) { list.innerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+    .catch(function (e) { clearTourSkels(); $('tourList').insertAdjacentHTML('beforeend', '<p class="msg err">' + esc(e.message) + '</p>'); });
+}
+
+/* Discarding unsaved work (or leaving a loaded tour) needs a confirm. */
+function clearTourSkels() {
+  Array.prototype.forEach.call(document.querySelectorAll('#tourList .tour-skel'), function (el) { el.remove(); });
+}
+function okToLeaveTour() {
+  if (!hasUnsavedWork()) return true;
+  return confirm('Discard the unsaved recording on this tour?');
+}
+function newTourItem() {
+  var btn = document.createElement('button');
+  btn.className = 'tour-item new' + (!editingRouteId ? ' sel' : '');
+  btn.innerHTML = '<span class="tour-name"><i class="fa-solid fa-plus"></i>&nbsp; New tour</span>' +
+    '<span class="tour-meta">Record a fresh route</span>';
+  btn.addEventListener('click', function () {
+    hide('tourScreen');
+    if (!editingRouteId) return;              // already on a new tour — keep any work
+    if (!okToLeaveTour()) return;
+    resetRoute(); toast('New tour');
+  });
+  return btn;
 }
 
 function renderTourList(routes) {
   var list = $('tourList');
-  if (!routes.length) { list.innerHTML = '<p class="hint">No tours in this project yet — cancel and record a new one.</p>'; return; }
-  list.innerHTML = '';
+  clearTourSkels();
+  if (!routes.length) { list.insertAdjacentHTML('beforeend', '<p class="hint">No saved tours in this project yet.</p>'); return; }
   routes.forEach(function (r) {
     var dm = Number(r.distance_m);
     var dist = (isNaN(dm) || !dm) ? '—' : (dm < 1000 ? Math.round(dm) + ' m' : (dm / 1000).toFixed(2) + ' km');
-    var btn = document.createElement('button'); btn.className = 'tour-item';
+    var btn = document.createElement('button'); btn.className = 'tour-item' + (r.route_id === editingRouteId ? ' sel' : '');
     btn.innerHTML = '<span class="tour-name">' + esc(r.name || r.route_id) + '</span>' +
       '<span class="tour-meta">' + esc(r.status || 'draft') + ' · ' + (r.poi_count || 0) + ' POI · ' + dist + '</span>';
-    btn.addEventListener('click', function () { loadTour(r.route_id); });
+    btn.addEventListener('click', function () {
+      if (r.route_id === editingRouteId) { hide('tourScreen'); return; }
+      if (!okToLeaveTour()) return;
+      loadTour(r.route_id, btn);
+    });
     list.appendChild(btn);
   });
 }
 
-function loadTour(routeId) {
+function loadTour(routeId, btn) {
   var pid = $('projSel').value;
-  var list = $('tourList'); list.innerHTML = '<p class="hint">Opening…</p>';
-  fetch(backendUrl() + '?action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid))
-    .then(function (r) { return r.json(); })
+  var list = $('tourList');
+  if (list.classList.contains('busy')) return;
+  list.classList.add('busy');                      // one open at a time
+  if (btn) btn.classList.add('loading-wave');      // wave on the tapped card while it opens
+  var done = function () { list.classList.remove('busy'); if (btn) btn.classList.remove('loading-wave'); };
+  var old = list.querySelector('.msg.err'); if (old) old.remove();
+  setFollow(false);
+  getJson('action=route&id=' + encodeURIComponent(routeId) + '&auth=' + encodeURIComponent(AUTH.token) + '&projectId=' + encodeURIComponent(pid), 'loadTour')
     .then(function (res) {
       if (!res || !res.ok) throw new Error((res && res.error) || 'could not open tour');
-      hydrateTour(res); hide('tourSheet');
+      done(); hydrateTour(res); hide('tourScreen');
     })
-    .catch(function (e) { list.innerHTML = '<p class="msg err">' + esc(e.message) + '</p>'; });
+    .catch(function (e) { done(); list.insertAdjacentHTML('beforeend', '<p class="msg err">' + esc(e.message) + '</p>'); });
 }
 
 /* Load a backend route bundle into the live editing state. */
-function hydrateTour(b) {
+function hydrateTour(b, quiet) {
   resetRoute();
   var r = b.route || {};
   editingRouteId = r.route_id;
@@ -775,25 +1103,24 @@ function hydrateTour(b) {
     strokeColor: '#6B7B73', strokeOpacity: .9, strokeWeight: 5,
     icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: .9, scale: 2.5 }, offset: '0', repeat: '14px' }] });
 
-  (b.pois || []).forEach(function (p, i) { addExistingPoi(p, i + 1); });
+  (b.pois || []).forEach(function (p) { addExistingPoi(p); });
   (b.waypoints || []).forEach(function (w) { addExistingCheckpoint(w); });
 
   computeTourBox();
-  $('editName').textContent = r.name || 'tour';
-  $('editBanner').hidden = false;
+  syncTourLabel();
   $('hud').hidden = false;
-  // In editing mode you can drop POIs/checkpoints where you stand, or record to extend.
-  ['cpBtn', 'poiBtn', 'finBtn'].forEach(function (id) { $(id).disabled = false; });
   $('undoBtn').disabled = true;
   updateCounts(); fitTour();
   if (lastFix) checkArea();
-  toast('Opened “' + (r.name || editingRouteId) + '” — drop a POI or record to extend');
+  if (!quiet) toast('Opened “' + (r.name || editingRouteId) + '” — tap Record to add POIs or extend it');
 }
 
-function addExistingPoi(p, n) {
+function addExistingPoi(p) {
   var lat = Number(p.lat), lng = Number(p.lng);
   if (isNaN(lat) || isNaN(lng)) return;
-  var m = { kind: 'poi', existing: true, poi_id: p.poi_id, lat: lat, lng: lng, accuracy_m: num0(p.accuracy_m),
+  var type = String(p.poi_type || 'primary').toLowerCase() === 'secondary' ? 'secondary' : 'primary';
+  var n = poiNumber(type);
+  var m = { kind: 'poi', poi_type: type, existing: true, poi_id: p.poi_id, lat: lat, lng: lng, accuracy_m: num0(p.accuracy_m),
     name: p.name || ('POI ' + n), category: p.category || '', briefing_md: p.briefing_md || '',
     geofence_radius_m: Number(p.geofence_radius_m) || 20 };
   poiVisual(m, n);
@@ -816,7 +1143,7 @@ function computeTourBox() {
   marks.forEach(function (m) { box.extend({ lat: m.lat, lng: m.lng }); any = true; });
   tourBox = any ? box : null;
 }
-function fitTour() { if (tourBox) { follow = false; map.fitBounds(tourBox, 64); } }
+function fitTour() { if (tourBox) { setFollow(false); map.fitBounds(tourBox, 64); } }
 
 function checkArea() {
   if (!tourBox || !lastFix || !google.maps.geometry) return;
@@ -837,15 +1164,8 @@ function setFar(on) {
   if (on === farOutside) return;
   farOutside = on;
   $('farFlag').hidden = !on;
-  if (on) {
-    if (recording) setRecording(false);                 // stop logging junk while away
-    ['recBtn', 'cpBtn', 'poiBtn'].forEach(function (id) { $(id).disabled = true; });
-  } else {
-    $('recBtn').disabled = false;
-    var canPlace = !!editingRouteId || started;
-    $('cpBtn').disabled = !canPlace;
-    $('poiBtn').disabled = !canPlace;
-  }
+  if (on && recording) setRecording(false);            // stop logging junk while away
+  syncRecBtn();
 }
 
 /* ── Splice a freshly-recorded segment into the existing path ─ */
@@ -908,7 +1228,8 @@ function buildEditedTrack(cb, errCb) {
   var encode = function (pts) { return google.maps.geometry.encoding.encodePath(pts.map(LL)); };
   var lenM = function (pts) { return pts.length > 1 ? Math.round(pathLen(pts)) : ''; };
 
-  if (trackPath.length < 2) {                 // no new walk → keep the loaded path
+  // No real new walk (e.g. Record → drop POIs → Stop on the spot) → keep the loaded path.
+  if (trackPath.length < 2 || pathLen(trackPath) < 15) {
     cb(existingPath.length ? encode(existingPath) : '', lenM(existingPath), existingPath);
     return;
   }
@@ -929,7 +1250,7 @@ function resolveJoins(pieces, done, fail) {
   (function next() {
     if (i >= joins.length) { done(connectors); return; }
     resolveOneJoin(joins[i], function (conn) {
-      if (conn === null) { fail('Walk the missing link, then tap Finish again.'); return; }
+      if (conn === null) { fail('Walk the missing link, then tap Stop again.'); return; }
       connectors[i] = conn; i++; next();
     });
   })();
@@ -972,7 +1293,7 @@ function showLinkResolver(join, alts, cb) {
     linkTempPolys.push(new google.maps.Polyline({ map: map, path: o.path, strokeColor: o.color, strokeOpacity: .95, strokeWeight: 5,
       icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '12px' }] }));
   });
-  follow = false; map.fitBounds(bounds, 70);
+  setFollow(false); map.fitBounds(bounds, 70);
 
   var settled = false;
   function pick(conn) { if (settled) return; settled = true; clearLinkTemps(); hide('linkSheet'); linkAbort = null; cb(conn); }
@@ -1017,12 +1338,47 @@ function alongDistance(path, pt) {
 function num0(v) { var n = Number(v); return isNaN(n) ? '' : n; }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 
+/* ── Open the installed AiSee Tours app ──────────────────────
+ * Both apps register the `aiseetours` scheme (for the login callback).
+ * Android: an intent: URL pinned to the package — Chrome only launches
+ * BROWSABLE activities, and the aiseetours://auth-callback filter is one; with no
+ * token in the fragment the app just comes to the front. If the app isn't
+ * installed, Chrome follows the fallback (a same-page #hash → toast, no reload).
+ * iOS: the bare scheme opens the app (it has no URL handler beyond its login
+ * sheet). If nothing takes over the page within ~2s, say it's not installed. */
+var TOURS_PKG = 'ai.aisee.tours';
+function platformOS() {
+  var ua = navigator.userAgent || '';
+  if (/Android/i.test(ua)) return 'android';
+  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+  return '';
+}
+var appOpenTimer = null;
+function openToursApp() {
+  var os = platformOS();
+  if (!os) return toast('Open this on an Android or iOS phone');
+  clearTimeout(appOpenTimer);
+  appOpenTimer = setTimeout(function () {
+    if (document.visibilityState === 'visible') toast('Couldn’t open AiSee Tours — is it installed?');
+  }, 2200);
+  if (os === 'android') {
+    var fallback = location.href.split('#')[0] + '#no-tours-app';
+    location.href = 'intent://auth-callback#Intent;scheme=aiseetours;package=' + TOURS_PKG +
+      ';S.browser_fallback_url=' + encodeURIComponent(fallback) + ';end';
+  } else {
+    location.href = 'aiseetours://open';
+  }
+}
+
 /* ── Profile balloon (identity + sign out) ──── */
 function toggleProfile() {
   var pop = $('profilePop');
   if (!pop.hidden) { pop.hidden = true; return; }
   setProfile((AUTH && (AUTH.name || AUTH.email)) || '', (AUTH && AUTH.email) || '');
   pop.hidden = false;
+  // Point the balloon's arrow at the profile button (it's no longer at the far right).
+  var b = $('profileBtn').getBoundingClientRect(), pr = pop.getBoundingClientRect();
+  pop.style.setProperty('--arrow-x', Math.round(b.left + b.width / 2 - pr.left - 6) + 'px');
 }
 function signOut() { clearSession(); hide('profilePop'); showSignIn('Signed out.'); }
 
@@ -1043,7 +1399,7 @@ function openDiagnostics() {
 }
 function copyDiagnostics() {
   var log = getErrorLog();
-  var text = 'Aisee Tours Recorder — error log (' + log.length + ')\n' + navigator.userAgent + '\n\n' + JSON.stringify(log, null, 2);
+  var text = 'AiSee Recorder — error log (' + log.length + ')\n' + navigator.userAgent + '\n\n' + JSON.stringify(log, null, 2);
   var done = function () { toast('Copied to clipboard'); };
   try { navigator.clipboard.writeText(text).then(done, function () { toast('Copy failed — select the text manually'); }); }
   catch (e) { toast('Copy not supported — select the text manually'); }
@@ -1051,24 +1407,55 @@ function copyDiagnostics() {
 
 /* ── UI wiring ───────────────────────────────────────────── */
 function wireUi() {
-  $('recBtn').addEventListener('click', function () { setRecording(!recording); });
+  $('locSkip').addEventListener('click', hideLocating);
+  $('recBtn').addEventListener('click', onRecTap);
   $('cpBtn').addEventListener('click', addCheckpoint);
-  $('poiBtn').addEventListener('click', openPoi);
+  $('poiBtn').addEventListener('click', function () { openPoi('primary'); });
+  $('poi2Btn').addEventListener('click', function () { openPoi('secondary'); });
   $('undoBtn').addEventListener('click', undo);
-  $('finBtn').addEventListener('click', openSave);
   $('profileBtn').addEventListener('click', toggleProfile);
-  $('openBtn').addEventListener('click', openTourPicker);
-  $('editExit').addEventListener('click', function () { resetRoute(); toast('Started a new route'); });
+  $('tourBtn').addEventListener('click', openTourPicker);
+  $('tName').addEventListener('input', function () { $('nameGo').disabled = !$('tName').value.trim(); });
+  $('tName').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitName(); });
+  $('nameGo').addEventListener('click', submitName);
+  $('npName').addEventListener('input', function () { if ($('npGo').textContent !== 'Creating…') $('npGo').disabled = !$('npName').value.trim(); });
+  $('npGo').addEventListener('click', createProject);
+  document.querySelectorAll('.segs').forEach(function (g) {
+    g.addEventListener('click', function (e) { var b = e.target.closest('.seg'); if (b && !b.disabled) setSeg(g.id, b.getAttribute('data-v')); });
+  });
+  $('poiName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('poiCat').focus(); } });
+  $('poiCat').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); savePoi(); } });
+  $('rName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('rDesc').focus(); } });
+  $('recenterBtn').addEventListener('click', recenter);
+  $('openToursApp').hidden = !platformOS();
+  $('openToursApp').addEventListener('click', openToursApp);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) clearTimeout(appOpenTimer); });
+  window.addEventListener('hashchange', function () {
+    if (location.hash !== '#no-tours-app') return;
+    history.replaceState(null, '', location.pathname + location.search);
+    clearTimeout(appOpenTimer);
+    toast('AiSee Tours isn’t installed on this phone');
+  });
+  $('npName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('npDesc').focus(); } });
+  // Keep the keyboard up while a form screen is open: taps on the panel, labels
+  // or the primary button don't steal focus from the field being typed in.
+  // (Cancel / ✕ still blur — they close the screen anyway.)
+  document.querySelectorAll('.formscreen').forEach(function (fs) {
+    fs.addEventListener('pointerdown', function (e) {
+      if (e.target.closest('input, textarea, select, [data-close]')) return;
+      e.preventDefault();
+    });
+  });
   $('linkRerec').addEventListener('click', cancelLinkResolve);
   $('helpBtn').addEventListener('click', function () { show('helpScreen'); });
   $('helpClose').addEventListener('click', function () { hide('helpScreen'); });
   $('projBtn').addEventListener('click', openProjectPicker);
   $('projClose').addEventListener('click', function () { hide('projScreen'); });
+  $('tourClose').addEventListener('click', function () { hide('tourScreen'); });
   $('poiSave').addEventListener('click', savePoi);
   $('saveGo').addEventListener('click', doSave);
   $('signinBtn').addEventListener('click', signIn);
   $('signOutBtn').addEventListener('click', signOut);
-  $('resNew').addEventListener('click', resetRoute);
   $('diagBtn').addEventListener('click', openDiagnostics);
   $('diagClose').addEventListener('click', function () { hide('diagScreen'); });
   $('diagCopy').addEventListener('click', copyDiagnostics);
@@ -1091,8 +1478,19 @@ function wireUi() {
     $('profilePop').hidden = true;
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { $('profilePop').hidden = true; hide('helpScreen'); hide('projScreen'); }
+    if (e.key === 'Escape') { $('profilePop').hidden = true; hide('helpScreen'); hide('projScreen'); hide('tourScreen'); }
   });
+}
+
+/* Focus inside the tap handler itself (iOS only raises the keyboard for a
+ * focus() made synchronously in the user gesture), with a retry once the
+ * overlay has painted. */
+function focusNow(el) { try { el.focus(); } catch (e) {} setTimeout(function () { if (document.activeElement !== el) el.focus(); }, 80); }
+
+/* Segmented option buttons (radius presets, status): one `.seg.on` per group. */
+function segVal(id) { var on = $(id).querySelector('.seg.on'); return on ? on.getAttribute('data-v') : ''; }
+function setSeg(id, v) {
+  $(id).querySelectorAll('.seg').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-v') === String(v)); });
 }
 
 /* ── Tiny helpers ────────────────────────────────────────── */

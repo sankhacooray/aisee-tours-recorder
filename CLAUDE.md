@@ -6,8 +6,8 @@ Tours**. The GitHub repo was renamed too: `sankhacooray/aisee-tours-recorder`; o
 ## What this is
 
 A **mobile-first field recorder** for Aisee Tours routes (first venue: Singapore Botanic Gardens).
-A venue/aisee staff member walks a route on their phone; the page captures **real GPS**, lets them **Mark POI** or
-**Mark checkpoint** along the way, and on **Finish** posts the whole route — the walked track + the
+A venue/aisee staff member walks a route on their phone; the page captures **real GPS**, lets them drop **Waypoints**,
+**1POI** (primary) or **2POI** (secondary) along the way, and on **Stop** posts the whole route — the walked track + the
 marked points — to the `aisee-tours-appscript` JSON API (`route.create`). The route then
 renders on the backend **dashboard** map and can be simulated there.
 
@@ -52,14 +52,15 @@ backend after login** (`?action=bootstrap`). First screen is **"Sign in with Goo
 `http://localhost:4766/` is seeded by `setupPlatform()`. For the deployed (HTTPS) recorder, run
 `addReturnUrl('https://<user>.github.io/<path>/')` in the backend editor.
 
-**Project picker.** The header `<select>` is filled from `bootstrap`. Pick the project a walk belongs to
-before saving; the chosen `projectId` rides with `route.create`. Projects are created/deleted from the
-**dashboard**, not here.
+**Project picker.** The app bar's first row opens a full-screen project picker filled from `bootstrap`
+(the hidden `#projSel` holds the value). Admin/aisee accounts get a "Create new project" card (backend
+`project.create`; aisee also picks the organisation). The second row is the tour picker ("New tour" or a
+saved tour to edit). The right side of the bar is an "AiSee Tours" launcher that opens the native app.
 
-**Maps / Directions key** lives on the backend (`setMapsApiKey`), not here. The optional "Snap path to
+**Maps / Directions key** lives on the backend (Script Property `MAPS_API_KEY`), not here — the browser key must allow this site's referrer. The optional "Snap path to
 footpaths" save option additionally needs the **Directions API** enabled on that key.
 
-**Account** sheet (gear icon): shows who you're signed in as, a **Sign out**, and an advanced backend-URL override.
+**Account** balloon (profile icon): shows who you're signed in as, **Diagnostics** (recent error log) and **Sign out**.
 
 ## Run / test
 
@@ -71,15 +72,17 @@ footpaths" save option additionally needs the **Directions API** enabled on that
   - or just `python3 -m http.server 4766` / `npx serve -l 4766` in a terminal.
 
   Then open <http://localhost:4766> → Chrome devtools → **Sensors** to fake a location and "walk" it.
-  Record → Mark a checkpoint + a POI → Finish → Save.
+  Record → name the tour → drop a Waypoint + a 1POI → Stop → Save.
 - **On a phone:** deploy to HTTPS first (`python3 deploy.py` → GitHub Pages) — geolocation is blocked
   on plain-`http://` LAN IPs. Then open the Pages URL on the phone and walk the route for real.
 
 ## Flow
 
-Record (starts the GPS track) → walk → **Checkpoint** drops a stay-on-track point · **POI** opens a
-sheet (name, category, briefing, radius) → **Finish** → name + status/tracking mode → **Save**. The
-POST sends `waypoints` (checkpoints), `pois`, and `track_polyline` (the encoded GPS track) plus
+The top bar's second row is the **tour picker**: "New tour" (default) or a saved tour to edit/extend.
+Record (a new tour must be named first; starts the GPS track) → walk → **Waypoint** drops a
+stay-on-track point · **1POI** / **2POI** open a sheet (name, category, briefing, radius) and set
+`poi_type` `primary` / `secondary` → **Stop** → name + status → **Save** (new routes are stamped `tracking_mode: gps`; after saving the tour reloads as the selected tour). Record is disabled while GPS accuracy is worse than ±30 m. Marks can only be
+dropped while recording. The POST sends `waypoints`, `pois` (with `poi_type`), and `track_polyline` (the encoded GPS track) plus
 `distance_m` / `est_duration_min` computed from the track.
 
 ## Port
